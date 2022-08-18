@@ -2,6 +2,7 @@ use std::io::Write;
 
 use anyhow::{bail, Result};
 
+use crate::parser::Parser;
 use crate::scanner::Scanner;
 
 pub struct Lox {
@@ -39,7 +40,7 @@ impl Lox {
     }
 
     fn run(&mut self, source: Vec<u8>) -> Result<()> {
-        let mut scanner = Scanner::new(source);
+        let mut scanner = Scanner::new(&source);
         let (tokens, errors) = scanner.scan_tokens();
 
         if !errors.is_empty() {
@@ -49,10 +50,9 @@ impl Lox {
             bail!("Scanning failed, see errors above.");
         }
 
-        // For now, just print the tokens.
-        for token in tokens {
-            println!("{:?}", token);
-        }
+        let mut parser = Parser::new(&source, tokens);
+        let ast = parser.parse()?;
+        println!("{:#?}", ast);
 
         Ok(())
     }

@@ -1,6 +1,6 @@
 use crate::types::{Number, SourceIndex};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TokenValue {
     // Single-character tokens.
     LeftParen,
@@ -51,7 +51,7 @@ pub enum TokenValue {
     Eof,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub value: TokenValue,
     pub lexeme: String,

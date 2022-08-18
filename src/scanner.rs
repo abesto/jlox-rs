@@ -1,47 +1,34 @@
-use std::fmt::Display;
-
 use thiserror::Error;
 
 use crate::token::Token;
 use crate::token::TokenValue;
 use crate::types::Number;
 use crate::types::SourceIndex;
+use crate::types::SourceLocation;
 
 #[derive(Error, Debug)]
-pub enum ScannerError {
+pub enum Error {
     #[error("Invalid UTF-8 character at {location}")]
-    FromUtf8Error { location: Location },
+    FromUtf8Error { location: SourceLocation },
 
     #[error("Unexpected character `{c}` at {location}")]
-    UnexpectedCharacter { c: u8, location: Location },
+    UnexpectedCharacter { c: u8, location: SourceLocation },
 
     #[error("Unterminated string starting at {start}")]
-    UnterminatedString { start: Location },
+    UnterminatedString { start: SourceLocation },
 
     #[error("Unterminated /* block comment */ starting at {start}")]
-    UnterminatedComment { start: Location },
+    UnterminatedComment { start: SourceLocation },
 }
 
-#[derive(Debug)]
-pub struct Location {
-    line: SourceIndex,
-    character: SourceIndex,
-}
-
-impl Display for Location {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}:{}", self.line, self.character))
-    }
-}
-
-pub struct Scanner {
-    source: Vec<u8>,
+pub struct Scanner<'a> {
+    source: &'a [u8],
     start: SourceIndex,
     current: SourceIndex,
 }
 
-impl Scanner {
-    pub fn new(source: Vec<u8>) -> Self {
+impl<'a> Scanner<'a> {
+    pub fn new(source: &'a [u8]) -> Self {
         Scanner {
             source,
             start: 0,
@@ -49,7 +36,7 @@ impl Scanner {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> (Vec<Token>, Vec<ScannerError>) {
+    pub fn scan_tokens(&mut self) -> (Vec<Token>, Vec<Error>) {
         let mut tokens = vec![];
         let mut errors = vec![];
 
@@ -83,7 +70,7 @@ impl Scanner {
         c
     }
 
-    fn consume(&mut self, c: u8) -> bool {
+    fn match_(&mut self, c: u8) -> bool {
         if self.is_at_end() {
             return false;
         }
@@ -106,33 +93,13 @@ impl Scanner {
         self.peek_offset(1)
     }
 
-    fn resolve_offset(&self, offset: SourceIndex) -> Location {
-        let mut loc = Location {
-            character: 0,
-            line: 0,
-        };
-
-        for i in 0..=std::cmp::min(offset, self.source.len() - 1) {
-            if self.source[i] == b'\n' {
-                loc.character = 0;
-                loc.line += 1;
-            } else {
-                loc.character += 1;
-            }
-        }
-
-        loc
-    }
-
-    fn substring(&self, start: SourceIndex, end: SourceIndex) -> Result<String, ScannerError> {
-        String::from_utf8(self.source[start..end].to_vec()).map_err(|source| {
-            ScannerError::FromUtf8Error {
-                location: self.resolve_offset(start + source.utf8_error().valid_up_to()),
-            }
+    fn substring(&self, start: SourceIndex, end: SourceIndex) -> Result<String, Error> {
+        String::from_utf8(self.source[start..end].to_vec()).map_err(|source| Error::FromUtf8Error {
+            location: SourceLocation::new(&self.source, start + source.utf8_error().valid_up_to()),
         })
     }
 
-    fn make_token(&mut self, value: TokenValue) -> Result<Token, ScannerError> {
+    fn make_token(&mut self, value: TokenValue) -> Result<Token, Error> {
         Ok(Token {
             value,
             lexeme: self.substring(self.start, self.current)?,
@@ -140,14 +107,14 @@ impl Scanner {
         })
     }
 
-    fn string(&mut self) -> Result<TokenValue, ScannerError> {
+    fn string(&mut self) -> Result<TokenValue, Error> {
         while self.peek() != b'"' && !self.is_at_end() {
             self.advance();
         }
 
         if self.is_at_end() {
-            return Err(ScannerError::UnterminatedString {
-                start: self.resolve_offset(self.start),
+            return Err(Error::UnterminatedString {
+                start: SourceLocation::new(&self.source, self.start),
             });
         }
 
@@ -159,7 +126,7 @@ impl Scanner {
         ))
     }
 
-    fn number(&mut self) -> Result<TokenValue, ScannerError> {
+    fn number(&mut self) -> Result<TokenValue, Error> {
         while self.peek().is_ascii_digit() {
             self.advance();
         }
@@ -179,14 +146,14 @@ impl Scanner {
         ))
     }
 
-    fn identifier(&mut self) -> Result<String, ScannerError> {
+    fn identifier(&mut self) -> Result<String, Error> {
         while self.peek().is_ascii_alphanumeric() || self.peek() == b'_' {
             self.advance();
         }
         self.substring(self.start, self.current)
     }
 
-    fn scan_token(&mut self) -> Result<Option<TokenValue>, ScannerError> {
+    fn scan_token(&mut self) -> Result<Option<TokenValue>, Error> {
         self.start = self.current;
         match self.advance() {
             b'(' => Ok(Some(TokenValue::LeftParen)),
@@ -200,44 +167,44 @@ impl Scanner {
             b';' => Ok(Some(TokenValue::Semicolon)),
             b'*' => Ok(Some(TokenValue::Star)),
 
-            b'!' => Ok(Some(if self.consume(b'=') {
+            b'!' => Ok(Some(if self.match_(b'=') {
                 TokenValue::BangEqual
             } else {
                 TokenValue::Bang
             })),
 
-            b'=' => Ok(Some(if self.consume(b'=') {
+            b'=' => Ok(Some(if self.match_(b'=') {
                 TokenValue::EqualEqual
             } else {
                 TokenValue::Equal
             })),
 
-            b'<' => Ok(Some(if self.consume(b'=') {
+            b'<' => Ok(Some(if self.match_(b'=') {
                 TokenValue::LessEqual
             } else {
                 TokenValue::Less
             })),
 
-            b'>' => Ok(Some(if self.consume(b'=') {
+            b'>' => Ok(Some(if self.match_(b'=') {
                 TokenValue::GreaterEqual
             } else {
                 TokenValue::Greater
             })),
 
             b'/' => {
-                if self.consume(b'/') {
+                if self.match_(b'/') {
                     // Comment to the end of the line
                     while self.peek() != b'\n' && !self.is_at_end() {
                         self.advance();
                     }
                     Ok(None)
-                } else if self.consume(b'*') {
+                } else if self.match_(b'*') {
                     while !(self.is_at_end() || (self.peek() == b'*' && self.peek_next() == b'/')) {
                         self.advance();
                     }
                     if self.is_at_end() {
-                        Err(ScannerError::UnterminatedComment {
-                            start: self.resolve_offset(self.start),
+                        Err(Error::UnterminatedComment {
+                            start: SourceLocation::new(&self.source, self.start),
                         })
                     } else {
                         self.advance();
@@ -275,9 +242,9 @@ impl Scanner {
                 })
             }
 
-            c => Err(ScannerError::UnexpectedCharacter {
+            c => Err(Error::UnexpectedCharacter {
                 c,
-                location: self.resolve_offset(self.current),
+                location: SourceLocation::new(&self.source, self.current),
             }),
         }
     }
@@ -290,7 +257,7 @@ mod test {
     #[test]
     fn test_tokens() {
         let mut scanner = super::Scanner::new(
-            b"(){},.-+;*!23!=42.42/* block \n comment */==<<==>/>=\"foo \nbar\"// this is a comment now".to_vec(),
+            &b"(){},.-+;*!23!=42.42/* block \n comment */==<<==>/>=\"foo \nbar\"// this is a comment now".to_vec(),
         );
         let (tokens, _) = scanner.scan_tokens();
         println!("{:?}", tokens);
