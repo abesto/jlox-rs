@@ -36,7 +36,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> (Vec<Token>, Vec<Error>) {
+    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, Vec<Error>> {
         let mut tokens = vec![];
         let mut errors = vec![];
 
@@ -57,7 +57,11 @@ impl<'a> Scanner<'a> {
             offset: self.current,
         });
 
-        (tokens, errors)
+        if errors.is_empty() {
+            Ok(tokens)
+        } else {
+            Err(errors)
+        }
     }
 
     fn is_at_end(&self) -> bool {
@@ -265,7 +269,7 @@ mod test {
     fn test_tokens() {
         let source = b"(){},.-+;*!23!=42.42/* block \n comment */==<<==>/>=\"foo \nbar\"// this is a comment now".to_vec();
         let mut scanner = super::Scanner::new(&source);
-        let (tokens, _) = scanner.scan_tokens();
+        let tokens = scanner.scan_tokens().unwrap();
 
         for (i, v) in [
             TokenValue::LeftParen,
@@ -302,7 +306,7 @@ mod test {
 
     #[test]
     fn test_unexpected_character() {
-        let (_, errs) = super::Scanner::new(b"^").scan_tokens();
+        let errs = super::Scanner::new(b"^").scan_tokens().err().unwrap();
         assert_eq!(errs.len(), 1);
     }
 

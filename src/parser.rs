@@ -7,9 +7,15 @@ use crate::types::SourceLocation;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("{msg}")]
+    #[error("{msg} at {location}")]
     Bad {
         msg: String,
+        location: SourceLocation,
+    },
+
+    #[error("LHS missing for `{operator}` at {location}")]
+    MissingLhs {
+        operator: String,
         location: SourceLocation,
     },
 }
@@ -36,6 +42,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct Parser<'a> {
     source: &'a [u8], // To resolve code locations for error reporting
     tokens: Vec<Token>,
+    errors: Vec<Error>,
     current: usize,
 }
 
@@ -45,12 +52,26 @@ impl<'a> Parser<'a> {
         Self {
             source,
             tokens,
+            errors: vec![],
             current: 0,
         }
     }
 
-    pub fn parse(&mut self) -> Result<Expr> {
-        self.expression()
+    pub fn parse(&mut self) -> Result<Expr, Vec<Error>> {
+        match self.expression() {
+            Ok(r) => {
+                println!("{}", r);
+                if self.errors.is_empty() {
+                    Ok(r)
+                } else {
+                    Err(std::mem::take(&mut self.errors))
+                }
+            }
+            Err(e) => {
+                self.errors.push(e);
+                Err(std::mem::take(&mut self.errors))
+            }
+        }
     }
 
     fn is_at_end(&self) -> bool {
@@ -99,14 +120,25 @@ impl<'a> Parser<'a> {
         &self.tokens[self.current]
     }
 
-    fn peek_next(&self) -> &Token {
-        self.tokens
-            .get(self.current + 1)
-            .unwrap_or_else(|| self.tokens.last().unwrap())
-    }
-
     fn expression(&mut self) -> Result<Expr> {
         self.comma()
+    }
+
+    /// Error production: missing LHS for binary operator
+    fn _missing_lhs(
+        &mut self,
+        operators: &[TV],
+        operand: fn(&mut Self) -> Result<Expr>,
+    ) -> Result<()> {
+        if self.match_(operators) {
+            self.errors.push(Error::MissingLhs {
+                operator: self.previous().lexeme.clone(),
+                location: SourceLocation::new(self.source, self.previous().offset),
+            });
+            // Skip RHS
+            operand(self)?;
+        }
+        Ok(())
     }
 
     fn _left_assoc_binary(
@@ -114,6 +146,7 @@ impl<'a> Parser<'a> {
         operators: &[TV],
         operand: fn(&mut Self) -> Result<Expr>,
     ) -> Result<Expr> {
+        self._missing_lhs(operators, operand)?;
         let mut expr = operand(self)?;
 
         while self.match_(operators) {
@@ -134,6 +167,7 @@ impl<'a> Parser<'a> {
         wanted_operators: &[TV],
         operand: fn(&mut Self) -> Result<Expr>,
     ) -> Result<Expr> {
+        self._missing_lhs(wanted_operators, operand)?;
         let mut children = vec![operand(self)?];
         let mut operators = vec![];
 
@@ -244,8 +278,8 @@ impl<'a> Parser<'a> {
                     expr: Box::new(expr),
                 }))
             }
-            _ => Err(Error::Bad {
-                msg: "Expected expression.".to_string(),
+            t => Err(Error::Bad {
+                msg: format!("Expected expression, found: `{}`", t),
                 location: SourceLocation::new(self.source, self.previous().offset),
             }),
         }
@@ -284,8 +318,7 @@ mod test {
     use crate::scanner::Scanner;
 
     fn parses_to(input: &str, expected: &str) {
-        let (tokens, errs) = Scanner::new(input.as_bytes()).scan_tokens();
-        assert_eq!(0, errs.len(), "{:?}", errs);
+        let tokens = Scanner::new(input.as_bytes()).scan_tokens().unwrap();
         let expr = Parser::new(input.as_bytes(), tokens).parse().unwrap();
         assert_eq!(expected, format!("{}", expr));
     }
@@ -322,5 +355,24 @@ mod test {
     #[test]
     fn test_ternary_right_assoc() {
         parses_to("0 ? 1 + 2 : 2 ? 3 : 4", "(0 ? ((1 + 2)) : (2 ? (3) : 4))");
+    }
+
+    #[test]
+    fn test_missing_lhs() {
+        let input = "+ 3 (1 + 2) > /4 (< 1)";
+        let tokens = Scanner::new(input.as_bytes()).scan_tokens().unwrap();
+        let errors = Parser::new(input.as_bytes(), tokens).parse().err().unwrap();
+        assert_eq!(
+            vec![
+                "LHS missing for `+` at 0:0".to_string(),
+                "LHS missing for `/` at 0:14".to_string(),
+                "LHS missing for `<` at 0:18".to_string(),
+                "Expected expression, found: `)` at 0:21".to_string()
+            ],
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+        );
     }
 }

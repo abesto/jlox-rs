@@ -14,8 +14,8 @@ impl SourceLocation {
             line: 0,
         };
 
-        for i in 0..=std::cmp::min(offset, source.len() - 1) {
-            if source[i] == b'\n' {
+        for c in source.iter().take(offset) {
+            if c == &b'\n' {
                 loc.character = 0;
                 loc.line += 1;
             } else {

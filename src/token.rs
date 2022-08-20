@@ -60,9 +60,9 @@ pub struct Token {
     pub offset: SourceIndex,
 }
 
-impl std::fmt::Display for Token {
+impl std::fmt::Display for TokenValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.value {
+        match &self {
             TokenValue::LeftParen => f.write_str("("),
             TokenValue::RightParen => f.write_str(")"),
             TokenValue::LeftBrace => f.write_str("{"),
@@ -105,5 +105,11 @@ impl std::fmt::Display for Token {
             TokenValue::While => f.write_str("while"),
             TokenValue::Eof => f.write_str("\\d"),
         }
+    }
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
     }
 }

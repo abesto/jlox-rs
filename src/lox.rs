@@ -40,20 +40,25 @@ impl Lox {
     }
 
     fn run(&mut self, source: Vec<u8>) -> Result<()> {
-        let mut scanner = Scanner::new(&source);
-        let (tokens, errors) = scanner.scan_tokens();
-
-        if !errors.is_empty() {
-            for error in errors {
-                eprintln!("{}\n", error);
+        match Scanner::new(&source).scan_tokens() {
+            Err(errors) => {
+                for error in errors {
+                    eprintln!("{}\n", error);
+                }
+                bail!("Scanning failed, see errors above.");
             }
-            bail!("Scanning failed, see errors above.");
+            Ok(tokens) => match Parser::new(&source, tokens).parse() {
+                Err(errors) => {
+                    for error in errors {
+                        eprintln!("{}\n", error);
+                    }
+                    bail!("Parsing failed, see errors above.");
+                }
+                Ok(ast) => {
+                    println!("{:#?}", ast);
+                    Ok(())
+                }
+            },
         }
-
-        let mut parser = Parser::new(&source, tokens);
-        let ast = parser.parse()?;
-        println!("{:#?}", ast);
-
-        Ok(())
     }
 }
