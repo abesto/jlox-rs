@@ -62,6 +62,11 @@ ast! {
             pub operator: Token,
             pub right: Box<Expr>,
         },
+        Ternary: struct {
+            pub left: Box<Expr>,
+            pub mid: Box<Expr>,
+            pub right: Box<Expr>,
+        },
         Grouping: struct {
             pub expr: Box<Expr>
         },
@@ -84,6 +89,9 @@ impl std::fmt::Display for Expr {
                 operator,
                 right,
             }) => f.write_fmt(format_args!("({} {} {})", left, operator, right)),
+            Expr::Ternary(Ternary { left, mid, right }) => {
+                f.write_fmt(format_args!("({} ? ({}) : {})", left, mid, right))
+            }
             Expr::Grouping(Grouping { expr }) => f.write_fmt(format_args!("({})", expr)),
         }
     }

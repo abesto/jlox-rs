@@ -9,10 +9,10 @@ use crate::types::SourceLocation;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Invalid UTF-8 character at {location}")]
-    FromUtf8Error { location: SourceLocation },
+    InvalidUtf8Char { location: SourceLocation },
 
     #[error("Unexpected character `{c}` at {location}")]
-    UnexpectedCharacter { c: u8, location: SourceLocation },
+    UnexpectedCharacter { c: char, location: SourceLocation },
 
     #[error("Unterminated string starting at {start}")]
     UnterminatedString { start: SourceLocation },
@@ -94,8 +94,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn substring(&self, start: SourceIndex, end: SourceIndex) -> Result<String, Error> {
-        String::from_utf8(self.source[start..end].to_vec()).map_err(|source| Error::FromUtf8Error {
-            location: SourceLocation::new(&self.source, start + source.utf8_error().valid_up_to()),
+        String::from_utf8(self.source[start..end].to_vec()).map_err(|source| {
+            Error::InvalidUtf8Char {
+                location: SourceLocation::new(
+                    self.source,
+                    start + source.utf8_error().valid_up_to(),
+                ),
+            }
         })
     }
 
@@ -114,7 +119,7 @@ impl<'a> Scanner<'a> {
 
         if self.is_at_end() {
             return Err(Error::UnterminatedString {
-                start: SourceLocation::new(&self.source, self.start),
+                start: SourceLocation::new(self.source, self.start),
             });
         }
 
@@ -166,6 +171,8 @@ impl<'a> Scanner<'a> {
             b'+' => Ok(Some(TokenValue::Plus)),
             b';' => Ok(Some(TokenValue::Semicolon)),
             b'*' => Ok(Some(TokenValue::Star)),
+            b'?' => Ok(Some(TokenValue::Question)),
+            b':' => Ok(Some(TokenValue::Colon)),
 
             b'!' => Ok(Some(if self.match_(b'=') {
                 TokenValue::BangEqual
@@ -204,7 +211,7 @@ impl<'a> Scanner<'a> {
                     }
                     if self.is_at_end() {
                         Err(Error::UnterminatedComment {
-                            start: SourceLocation::new(&self.source, self.start),
+                            start: SourceLocation::new(self.source, self.start),
                         })
                     } else {
                         self.advance();
@@ -243,7 +250,7 @@ impl<'a> Scanner<'a> {
             }
 
             c => Err(Error::UnexpectedCharacter {
-                c,
+                c: c.into(),
                 location: SourceLocation::new(self.source, self.current),
             }),
         }
@@ -291,6 +298,12 @@ mod test {
         }
 
         assert_eq!(tokens[12].lexeme, "!=");
+    }
+
+    #[test]
+    fn test_unexpected_character() {
+        let (_, errs) = super::Scanner::new(b"^").scan_tokens();
+        assert_eq!(errs.len(), 1);
     }
 
     // TODO test identifiers and reserved keywords

@@ -20,16 +20,19 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 // this is OK because we don't yet have enough parsing for synchronization points,
 // but once we do, it'll need to be restructured to report all errors.
 
+// TODO error on leftover tokens
+
 /// expression = comma ;
-/// comma      = equality ( ( "," ) equality )* ;
-/// equality   = comparison ( ( "!=" | "==") comparison )* ;
-/// comparison = term ( ( ">" | "<" | "<=" ) term )* ;
-/// term       = factor ( ( "=" | "+" ) factor )* ;
-/// factor     = unary ( ( "/" | "*" ) unary )* ;
-/// unary      = ( "!" | "-" ) unary
-///            | primary ;
-/// primary    = NUMBER | STRING | "true" | "false" | "nil"
-///            = "(" expression ")" ;
+/// comma        = ternary ( ( "," ) ternary )* ;
+/// ternary      = equality ( "?" expression ":" expression )*;
+/// equality     = comparison ( ( "!=" | "==" ) comparison )*
+/// comparison   = term ( ( ">" | "<" | "<=" | ">=" ) term )* ;
+/// term         = factor ( ( "-" | "+" ) factor )* ;
+/// factor       = unary ( ( "/" | "*" ) unary )* ;
+/// unary        = ( "!" | "-" ) unary
+///              | primary ;
+/// primary      = NUMBER | STRING | "true" | "false" | "nil"
+///              | "(" expression ")" ;
 pub struct Parser<'a> {
     source: &'a [u8], // To resolve code locations for error reporting
     tokens: Vec<Token>,
@@ -96,6 +99,12 @@ impl<'a> Parser<'a> {
         &self.tokens[self.current]
     }
 
+    fn peek_next(&self) -> &Token {
+        self.tokens
+            .get(self.current + 1)
+            .unwrap_or_else(|| self.tokens.last().unwrap())
+    }
+
     fn expression(&mut self) -> Result<Expr> {
         self.comma()
     }
@@ -120,16 +129,80 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    fn _right_assoc_binary(
+        &mut self,
+        wanted_operators: &[TV],
+        operand: fn(&mut Self) -> Result<Expr>,
+    ) -> Result<Expr> {
+        let mut children = vec![operand(self)?];
+        let mut operators = vec![];
+
+        while self.match_(wanted_operators) {
+            operators.push(self.previous().clone());
+            children.push(operand(self)?);
+        }
+
+        if children.len() == 1 {
+            return Ok(children.pop().unwrap());
+        }
+
+        let mut expr = Expr::Binary(Binary {
+            right: Box::new(children.pop().unwrap()),
+            operator: operators.pop().unwrap(),
+            left: Box::new(children.pop().unwrap()),
+        });
+
+        while let Some(left) = children.pop() {
+            expr = Expr::Binary(Binary {
+                left: Box::new(left),
+                operator: operators.pop().unwrap(),
+                right: Box::new(expr),
+            })
+        }
+
+        Ok(expr)
+    }
+
     fn comma(&mut self) -> Result<Expr> {
-        self._left_assoc_binary(&[TV::Comma], Self::equality)
+        self._left_assoc_binary(&[TV::Comma], Self::ternary)
+    }
+
+    fn ternary(&mut self) -> Result<Expr> {
+        let mut children = vec![self.equality()?];
+
+        while self.match_(&[TV::Question]) {
+            children.push(self.expression()?);
+            self.consume(&TV::Colon, ": expected")?;
+            children.push(self.expression()?);
+        }
+
+        if children.len() == 1 {
+            return Ok(children.pop().unwrap());
+        }
+
+        let mut expr = Expr::Ternary(Ternary {
+            right: Box::new(children.pop().unwrap()),
+            mid: Box::new(children.pop().unwrap()),
+            left: Box::new(children.pop().unwrap()),
+        });
+
+        while !children.is_empty() {
+            expr = Expr::Ternary(Ternary {
+                mid: Box::new(children.pop().unwrap()),
+                left: Box::new(children.pop().unwrap()),
+                right: Box::new(expr),
+            });
+        }
+
+        Ok(expr)
     }
 
     fn equality(&mut self) -> Result<Expr> {
-        self._left_assoc_binary(&[TV::BangEqual, TV::EqualEqual], Self::comparison)
+        self._right_assoc_binary(&[TV::BangEqual, TV::EqualEqual], Self::comparison)
     }
 
     fn comparison(&mut self) -> Result<Expr> {
-        self._left_assoc_binary(
+        self._right_assoc_binary(
             &[TV::Greater, TV::GreaterEqual, TV::Less, TV::LessEqual],
             Self::term,
         )
@@ -210,14 +283,44 @@ mod test {
     use super::*;
     use crate::scanner::Scanner;
 
+    fn parses_to(input: &str, expected: &str) {
+        let (tokens, errs) = Scanner::new(input.as_bytes()).scan_tokens();
+        assert_eq!(0, errs.len(), "{:?}", errs);
+        let expr = Parser::new(input.as_bytes(), tokens).parse().unwrap();
+        assert_eq!(expected, format!("{}", expr));
+    }
+
     #[test]
     fn test_expression() {
-        let source = b"1 + 2, (3 + 4) * 5 / 6 == 7";
-        let (tokens, _) = Scanner::new(source).scan_tokens();
-        let expr = Parser::new(source, tokens).parse().unwrap();
-        assert_eq!(
+        parses_to(
+            "1 + 2, (3 + 4) * 5 / 6 == 7",
             "((1 + 2) , (((((3 + 4)) * 5) / 6) == 7))",
-            format!("{}", expr)
         );
+    }
+
+    #[test]
+    fn test_math_left_assoc() {
+        parses_to("1 + 2 - 3 + 4", "(((1 + 2) - 3) + 4)");
+        parses_to("1 * 2 / 3 * 4", "(((1 * 2) / 3) * 4)");
+    }
+
+    #[test]
+    fn test_equality_right_assoc() {
+        parses_to("1 == 2 != 3 == 4", "(1 == (2 != (3 == 4)))");
+    }
+
+    #[test]
+    fn test_comparison_right_assoc() {
+        parses_to("1 < 2 <= 3 > 4 >= 5", "(1 < (2 <= (3 > (4 >= 5))))");
+    }
+
+    #[test]
+    fn test_ternary() {
+        parses_to("1 < 2 ? 3 + 4 : 5 + 6", "((1 < 2) ? ((3 + 4)) : (5 + 6))");
+    }
+
+    #[test]
+    fn test_ternary_right_assoc() {
+        parses_to("0 ? 1 + 2 : 2 ? 3 : 4", "(0 ? ((1 + 2)) : (2 ? (3) : 4))");
     }
 }
