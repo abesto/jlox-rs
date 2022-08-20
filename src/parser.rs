@@ -22,10 +22,6 @@ pub enum Error {
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-// WATCH OUT: this parser currently explodes on the first error it hits.
-// this is OK because we don't yet have enough parsing for synchronization points,
-// but once we do, it'll need to be restructured to report all errors.
-
 // TODO error on leftover tokens
 
 /// expression = comma ;
