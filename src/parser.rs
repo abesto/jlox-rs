@@ -20,6 +20,16 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 // this is OK because we don't yet have enough parsing for synchronization points,
 // but once we do, it'll need to be restructured to report all errors.
 
+/// expression = comma ;
+/// comma      = equality ( ( "," ) equality )* ;
+/// equality   = comparison ( ( "!=" | "==") comparison )* ;
+/// comparison = term ( ( ">" | "<" | "<=" ) term )* ;
+/// term       = factor ( ( "=" | "+" ) factor )* ;
+/// factor     = unary ( ( "/" | "*" ) unary )* ;
+/// unary      = ( "!" | "-" ) unary
+///            | primary ;
+/// primary    = NUMBER | STRING | "true" | "false" | "nil"
+///            = "(" expression ")" ;
 pub struct Parser<'a> {
     source: &'a [u8], // To resolve code locations for error reporting
     tokens: Vec<Token>,
@@ -87,7 +97,7 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> Result<Expr> {
-        self.equality()
+        self.comma()
     }
 
     fn _left_assoc_binary(
@@ -108,6 +118,10 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    fn comma(&mut self) -> Result<Expr> {
+        self._left_assoc_binary(&[TV::Comma], Self::equality)
     }
 
     fn equality(&mut self) -> Result<Expr> {
@@ -188,5 +202,22 @@ impl<'a> Parser<'a> {
 
             self.advance();
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::scanner::Scanner;
+
+    #[test]
+    fn test_expression() {
+        let source = b"1 + 2, (3 + 4) * 5 / 6 == 7";
+        let (tokens, _) = Scanner::new(source).scan_tokens();
+        let expr = Parser::new(source, tokens).parse().unwrap();
+        assert_eq!(
+            "((1 + 2) , (((((3 + 4)) * 5) / 6) == 7))",
+            format!("{}", expr)
+        );
     }
 }

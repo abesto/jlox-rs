@@ -1,3 +1,5 @@
+use std::fmt::Pointer;
+
 use paste::paste;
 
 use crate::{token::Token, types::Number};
@@ -63,5 +65,26 @@ ast! {
         Grouping: struct {
             pub expr: Box<Expr>
         },
+    }
+}
+
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Literal(Literal::Number(n)) => n.fmt(f),
+            Expr::Literal(Literal::String(s)) => s.fmt(f),
+            Expr::Literal(Literal::False) => false.fmt(f),
+            Expr::Literal(Literal::True) => true.fmt(f),
+            Expr::Literal(Literal::Nil) => f.write_str("nil"),
+            Expr::Unary(Unary { operator, right }) => {
+                f.write_fmt(format_args!("{}{}", operator, right))
+            }
+            Expr::Binary(Binary {
+                left,
+                operator,
+                right,
+            }) => f.write_fmt(format_args!("({} {} {})", left, operator, right)),
+            Expr::Grouping(Grouping { expr }) => f.write_fmt(format_args!("({})", expr)),
+        }
     }
 }

@@ -244,7 +244,7 @@ impl<'a> Scanner<'a> {
 
             c => Err(Error::UnexpectedCharacter {
                 c,
-                location: SourceLocation::new(&self.source, self.current),
+                location: SourceLocation::new(self.source, self.current),
             }),
         }
     }
@@ -256,11 +256,9 @@ mod test {
 
     #[test]
     fn test_tokens() {
-        let mut scanner = super::Scanner::new(
-            &b"(){},.-+;*!23!=42.42/* block \n comment */==<<==>/>=\"foo \nbar\"// this is a comment now".to_vec(),
-        );
+        let source = b"(){},.-+;*!23!=42.42/* block \n comment */==<<==>/>=\"foo \nbar\"// this is a comment now".to_vec();
+        let mut scanner = super::Scanner::new(&source);
         let (tokens, _) = scanner.scan_tokens();
-        println!("{:?}", tokens);
 
         for (i, v) in [
             TokenValue::LeftParen,
