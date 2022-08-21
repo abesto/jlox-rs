@@ -6,7 +6,7 @@ use crate::{
     types::{Number, SourceLocation},
 };
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Value {
     Nil,
     Boolean(bool),
@@ -55,17 +55,6 @@ pub enum Error {
         location: SourceLocation,
     },
 
-    #[error(
-        "`{operator}` arguments mismatched: {left} of type {} vs {right} of type {} at {location}",
-        .left.type_of(), .right.type_of()
-    )]
-    OperandMismatch {
-        operator: TokenValue,
-        left: Value,
-        right: Value,
-        location: SourceLocation,
-    },
-
     #[error("Division by zero at {location}")]
     DivisionByZero { location: SourceLocation },
 }
@@ -111,6 +100,7 @@ impl Visitor<Result> for &mut Interpreter {
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::Slash => match (left, right) {
                 (Value::Number(_), Value::Number(r)) if r == 0.0 => Err(Error::DivisionByZero {
                     location: SourceLocation::new(&self.source, op.offset),
@@ -119,49 +109,49 @@ impl Visitor<Result> for &mut Interpreter {
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::Star => match (left, right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l * r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::Plus => match (&left, &right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l + r)),
                 (Value::String(l), Value::String(r)) => Ok(Value::String(format!("{}{}", l, r))),
-                (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_)) => {
-                    Err(Error::OperandMismatch {
-                        operator: op.value.clone(),
-                        left,
-                        right,
-                        location: SourceLocation::new(&self.source, op.offset),
-                    })
-                }
-                (Value::String(_) | Value::Number(_), _) => {
-                    self.err_invalid_operand(op, &["Number"], right)
-                }
-                _ => self.err_invalid_operand(op, &["Number"], left),
+                (Value::String(l), r) => Ok(Value::String(format!("{}{}", l, r))),
+                (l, Value::String(r)) => Ok(Value::String(format!("{}{}", l, r))),
+                (Value::Number(_), _) => self.err_invalid_operand(op, &["Number", "String"], right),
+                _ => self.err_invalid_operand(op, &["Number", "String"], left),
             },
+
             TokenValue::Greater => match (left, right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l > r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::Less => match (left, right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l < r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::GreaterEqual => match (left, right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l >= r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::LessEqual => match (left, right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l <= r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
+
             TokenValue::EqualEqual => Ok(Value::Boolean(left == right)),
             TokenValue::BangEqual => Ok(Value::Boolean(left != right)),
+
             _ => unreachable!(),
         }
     }
