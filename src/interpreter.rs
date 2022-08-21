@@ -65,6 +65,9 @@ pub enum Error {
         right: Value,
         location: SourceLocation,
     },
+
+    #[error("Division by zero at {location}")]
+    DivisionByZero { location: SourceLocation },
 }
 
 pub type Result<V = Value, E = Error> = std::result::Result<V, E>;
@@ -109,6 +112,9 @@ impl Visitor<Result> for &mut Interpreter {
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
             },
             TokenValue::Slash => match (left, right) {
+                (Value::Number(_), Value::Number(r)) if r == 0.0 => Err(Error::DivisionByZero {
+                    location: SourceLocation::new(&self.source, op.offset),
+                }),
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l / r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
                 (v, _) => self.err_invalid_operand(op, &["Number"], v),
