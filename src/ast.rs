@@ -66,6 +66,9 @@ ast! {
         Grouping: struct {
             pub expr: Box<Expr>
         },
+        Variable: struct {
+            pub name: Token
+        }
     }
 
     pub enum Stmt {
@@ -74,6 +77,10 @@ ast! {
         },
         Print: struct {
             pub expr: Expr
+        },
+        Var: struct {
+            pub name: Token,
+            pub initializer: Option<Box<Expr>>
         }
     }
 }
@@ -98,6 +105,7 @@ impl std::fmt::Display for Expr {
                 f.write_fmt(format_args!("({} ? ({}) : {})", left, mid, right))
             }
             Expr::Grouping(Grouping { expr }) => f.write_fmt(format_args!("({})", expr)),
+            Expr::Variable(Variable { name }) => name.lexeme.fmt(f),
         }
     }
 }

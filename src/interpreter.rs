@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::{
     ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Literal, Stmt, StmtVisitor},
+    environment::Environment,
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
 };
@@ -64,12 +65,60 @@ pub enum Error {
 
     #[error("Division by zero at {location}")]
     DivisionByZero { location: SourceLocation },
+
+    #[error("Undefined variable {name} at {location}")]
+    UndefinedVariable {
+        name: String,
+        location: SourceLocation,
+    },
 }
 
 pub type Result<V, E = Error> = std::result::Result<V, E>;
 
 pub struct Interpreter {
     source: Vec<u8>, // To resolve code locations for error reporting
+    environment: Environment,
+}
+
+impl Interpreter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            source: vec![],
+            environment: Environment::new(),
+        }
+    }
+
+    fn _evaluate(&mut self, expr: &Expr) -> Result<Value> {
+        walk_expr(self, expr)
+    }
+
+    fn _interpret(&mut self, program: &[Stmt]) -> Result<()> {
+        for stmt in program {
+            walk_stmt(&mut *self, stmt)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result<()> {
+        self.source = source;
+        self._interpret(program)
+    }
+
+    fn err_invalid_operand<V, S: ToString>(
+        &self,
+        op: &Token,
+        expected: &[S],
+        actual: Value,
+    ) -> Result<V> {
+        Err(Error::InvalidOperand {
+            operator: op.value.clone(),
+            expected: Vec::from_iter(expected.iter().map(ToString::to_string)),
+            actual,
+            location: SourceLocation::new(&self.source, op.offset),
+        })
+    }
 }
 
 impl ExprVisitor<Result<Value>> for &mut Interpreter {
@@ -175,6 +224,16 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
     fn visit_grouping(&mut self, x: &crate::ast::Grouping) -> Result<Value> {
         self._evaluate(&x.expr)
     }
+
+    fn visit_variable(&mut self, x: &crate::ast::Variable) -> Result<Value> {
+        match self.environment.get(&x.name) {
+            Some(v) => Ok(v.clone()),
+            None => Err(Error::UndefinedVariable {
+                name: x.name.lexeme.clone(),
+                location: SourceLocation::new(&self.source, x.name.offset),
+            }),
+        }
+    }
 }
 
 impl StmtVisitor<Result<()>> for &mut Interpreter {
@@ -187,42 +246,14 @@ impl StmtVisitor<Result<()>> for &mut Interpreter {
         println!("{}", self._evaluate(&x.expr)?);
         Ok(())
     }
-}
 
-impl Interpreter {
-    #[must_use]
-    pub fn new() -> Self {
-        Self { source: vec![] }
-    }
+    fn visit_var(&mut self, x: &crate::ast::Var) -> Result<()> {
+        let value = match &x.initializer {
+            Some(expr) => self._evaluate(&expr)?,
+            None => Value::Nil,
+        };
 
-    fn _evaluate(&mut self, expr: &Expr) -> Result<Value> {
-        walk_expr(self, expr)
-    }
-
-    fn _interpret(&mut self, program: &[Stmt]) -> Result<()> {
-        for stmt in program {
-            walk_stmt(&mut *self, stmt)?;
-        }
-
+        self.environment.define(&x.name.lexeme, value);
         Ok(())
-    }
-
-    pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result<()> {
-        self.source = source;
-        self._interpret(program)
-    }
-
-    fn err_invalid_operand<V, S: ToString>(
-        &self,
-        op: &Token,
-        expected: &[S],
-        actual: Value,
-    ) -> Result<V> {
-        Err(Error::InvalidOperand {
-            operator: op.value.clone(),
-            expected: Vec::from_iter(expected.iter().map(ToString::to_string)),
-            actual,
-            location: SourceLocation::new(&self.source, op.offset),
-        })
     }
 }

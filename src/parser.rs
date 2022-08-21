@@ -53,6 +53,25 @@ pub struct Parser<'a> {
     current: usize,
 }
 
+trait TokenPred {
+    fn matches(&self, token: &Token) -> bool;
+}
+
+impl TokenPred for TV {
+    fn matches(&self, token: &Token) -> bool {
+        &token.value == self
+    }
+}
+
+impl<F> TokenPred for F
+where
+    F: Fn(&Token) -> bool,
+{
+    fn matches(&self, token: &Token) -> bool {
+        self(token)
+    }
+}
+
 impl<'a> Parser<'a> {
     #[must_use]
     pub fn new(source: &'a [u8], tokens: Vec<Token>) -> Self {
@@ -68,7 +87,7 @@ impl<'a> Parser<'a> {
         let mut statements = vec![];
 
         while !self.is_at_end() {
-            match self.statement() {
+            match self.declaration() {
                 Ok(s) => {
                     statements.push(s);
                 }
@@ -90,9 +109,9 @@ impl<'a> Parser<'a> {
         self.tokens[self.current].value == TV::Eof
     }
 
-    fn match_(&mut self, values: &[TV]) -> bool {
-        for value in values {
-            if self.check(value) {
+    fn match_(&mut self, preds: &[impl TokenPred]) -> bool {
+        for pred in preds {
+            if self.check(pred) {
                 self.advance();
                 return true;
             }
@@ -100,8 +119,8 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn consume<S: ToString>(&mut self, value: &TV, msg: S) -> Result<&Token> {
-        if self.check(value) {
+    fn consume<S: ToString>(&mut self, pred: &impl TokenPred, msg: S) -> Result<&Token> {
+        if self.check(pred) {
             Ok(self.advance())
         } else {
             Err(Error::Bad {
@@ -111,10 +130,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn check(&self, value: &TV) -> bool {
+    fn check(&self, pred: &impl TokenPred) -> bool {
         self.tokens
             .get(self.current)
-            .map_or(false, |t| &t.value == value)
+            .map_or(false, |t| pred.matches(t))
     }
 
     fn advance(&mut self) -> &Token {
@@ -130,6 +149,35 @@ impl<'a> Parser<'a> {
 
     fn peek(&self) -> &Token {
         &self.tokens[self.current]
+    }
+
+    fn declaration(&mut self) -> Result<Stmt> {
+        let res = if self.match_(&[TV::Var]) {
+            self.var_declaration()
+        } else {
+            self.statement()
+        };
+        if res.is_err() {
+            self.synchronize();
+        }
+        res
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt> {
+        let name = self
+            .consume(
+                &|t: &Token| matches!(t.value, TV::Identifier(_)),
+                "Expected variable name",
+            )?
+            .clone();
+        let initializer = if self.match_(&[TV::Equal]) {
+            Some(Box::new(self.expression()?))
+        } else {
+            None
+        };
+        self.consume(&TV::Semicolon, "Expected `;` after variable declaration")?;
+
+        Ok(Stmt::Var(Var { name, initializer }))
     }
 
     fn statement(&mut self) -> Result<Stmt> {
@@ -275,6 +323,9 @@ impl<'a> Parser<'a> {
                     expr: Box::new(expr),
                 }))
             }
+            TV::Identifier(_) => Ok(Expr::Variable(Variable {
+                name: self.previous().clone(),
+            })),
             t => Err(Error::Bad {
                 msg: format!("Expected expression, found: `{}`", t),
                 location: SourceLocation::new(self.source, self.previous().offset),
@@ -282,7 +333,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[allow(dead_code)]
     fn synchronize(&mut self) {
         self.advance();
 

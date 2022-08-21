@@ -6,7 +6,7 @@ use crate::interpreter::Interpreter;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 
-// TODO write basic smoke tests by driving the interpreter with streams
+// TODO write integration tests by driving the interpreter with streams
 // TODO get rid of had_error and had_runtime_error
 // TODO it'd be better to not pass &source in to Parser and Interpreter, and instead translate offsets
 //      back to line / char here
