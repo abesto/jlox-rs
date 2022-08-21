@@ -1,5 +1,3 @@
-use std::fmt::Pointer;
-
 use paste::paste;
 
 use crate::{token::Token, types::Number};
@@ -26,14 +24,14 @@ macro_rules! ast {
             )
         ),*;
 
-        pub trait Visitor {
+        pub trait Visitor<T> {
             $($(
-                fn [<visit_ $n:lower>](&mut self, x: &$n);
+                fn [<visit_ $n:lower>](&mut self, x: &$n) -> T;
             )*)*
         }
 
         $(
-            pub fn [<walk_ $r:lower>](mut visitor: impl Visitor, x: &$r) {
+            pub fn [<walk_ $r:lower>]<T>(mut visitor: impl Visitor<T>, x: &$r) -> T {
                 match x {
                     $(
                         $r::$n(y) => visitor.[<visit_ $n:lower>](y)

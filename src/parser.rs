@@ -56,7 +56,6 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self) -> Result<Expr, Vec<Error>> {
         match self.expression() {
             Ok(r) => {
-                println!("{}", r);
                 if self.errors.is_empty() {
                     Ok(r)
                 } else {
@@ -246,6 +245,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn synchronize(&mut self) {
         self.advance();
 
