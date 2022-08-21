@@ -21,17 +21,15 @@ macro_rules! ast {
         $(
             ast_root!(
                 pub enum $r { $($n: $t $b),* }
-            )
-        ),*;
+            );
 
-        pub trait Visitor<T> {
-            $($(
-                fn [<visit_ $n:lower>](&mut self, x: &$n) -> T;
-            )*)*
-        }
+            pub trait [<$r Visitor>]<T> {
+                $(
+                    fn [<visit_ $n:lower>](&mut self, x: &$n) -> T;
+                )*
+            }
 
-        $(
-            pub fn [<walk_ $r:lower>]<T>(mut visitor: impl Visitor<T>, x: &$r) -> T {
+            pub fn [<walk_ $r:lower>]<T>(mut visitor: impl [<$r Visitor>]<T>, x: &$r) -> T {
                 match x {
                     $(
                         $r::$n(y) => visitor.[<visit_ $n:lower>](y)
@@ -68,6 +66,15 @@ ast! {
         Grouping: struct {
             pub expr: Box<Expr>
         },
+    }
+
+    pub enum Stmt {
+        Expression: struct {
+            pub expr: Expr
+        },
+        Print: struct {
+            pub expr: Expr
+        }
     }
 }
 

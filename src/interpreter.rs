@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    ast::{walk_expr, Expr, Literal, Visitor},
+    ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Literal, Stmt, StmtVisitor},
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
 };
@@ -28,6 +28,13 @@ impl Value {
         }
         .to_string()
     }
+
+    fn repr(&self) -> String {
+        match self {
+            Self::String(s) => format!("{:?}", s),
+            v => format!("{}", v),
+        }
+    }
 }
 
 impl std::fmt::Display for Value {
@@ -36,7 +43,7 @@ impl std::fmt::Display for Value {
             Self::Nil => f.write_str("nil"),
             Self::Boolean(b) => b.fmt(f),
             Self::Number(n) => n.fmt(f),
-            Self::String(s) => write!(f, "{:?}", s),
+            Self::String(s) => s.fmt(f),
         }
     }
 }
@@ -44,9 +51,9 @@ impl std::fmt::Display for Value {
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(
-        "`{operator}` expected one of: [{}], found {actual} of type {} at {location}",
+        "`{operator}` expected one of: [{}], found {} of type {} at {location}",
         .expected.join(", "),
-        .actual.type_of())
+        .actual.repr(), .actual.type_of())
     ]
     InvalidOperand {
         operator: TokenValue,
@@ -59,14 +66,14 @@ pub enum Error {
     DivisionByZero { location: SourceLocation },
 }
 
-pub type Result<V = Value, E = Error> = std::result::Result<V, E>;
+pub type Result<V, E = Error> = std::result::Result<V, E>;
 
 pub struct Interpreter {
     source: Vec<u8>, // To resolve code locations for error reporting
 }
 
-impl Visitor<Result> for &mut Interpreter {
-    fn visit_literal(&mut self, x: &crate::ast::Literal) -> Result {
+impl ExprVisitor<Result<Value>> for &mut Interpreter {
+    fn visit_literal(&mut self, x: &crate::ast::Literal) -> Result<Value> {
         Ok(match x {
             Literal::Nil => Value::Nil,
             Literal::False => Value::Boolean(false),
@@ -76,7 +83,7 @@ impl Visitor<Result> for &mut Interpreter {
         })
     }
 
-    fn visit_unary(&mut self, x: &crate::ast::Unary) -> Result {
+    fn visit_unary(&mut self, x: &crate::ast::Unary) -> Result<Value> {
         let right = self._evaluate(&x.right)?;
 
         match x.operator.value {
@@ -89,7 +96,7 @@ impl Visitor<Result> for &mut Interpreter {
         }
     }
 
-    fn visit_binary(&mut self, x: &crate::ast::Binary) -> Result {
+    fn visit_binary(&mut self, x: &crate::ast::Binary) -> Result<Value> {
         let left = self._evaluate(&x.left)?;
         let right = self._evaluate(&x.right)?;
         let op = &x.operator;
@@ -118,9 +125,9 @@ impl Visitor<Result> for &mut Interpreter {
 
             TokenValue::Plus => match (&left, &right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l + r)),
-                (Value::String(l), Value::String(r)) => Ok(Value::String(format!("{}{}", l, r))),
-                (Value::String(l), r) => Ok(Value::String(format!("{}{}", l, r))),
-                (l, Value::String(r)) => Ok(Value::String(format!("{}{}", l, r))),
+                (Value::String(_), _) | (_, Value::String(_)) => {
+                    Ok(Value::String(format!("{}{}", left, right)))
+                }
                 (Value::Number(_), _) => self.err_invalid_operand(op, &["Number", "String"], right),
                 _ => self.err_invalid_operand(op, &["Number", "String"], left),
             },
@@ -156,7 +163,7 @@ impl Visitor<Result> for &mut Interpreter {
         }
     }
 
-    fn visit_ternary(&mut self, x: &crate::ast::Ternary) -> Result {
+    fn visit_ternary(&mut self, x: &crate::ast::Ternary) -> Result<Value> {
         let cond = self._evaluate(&x.left)?;
         if cond.is_truthy() {
             self._evaluate(&x.mid)
@@ -165,8 +172,20 @@ impl Visitor<Result> for &mut Interpreter {
         }
     }
 
-    fn visit_grouping(&mut self, x: &crate::ast::Grouping) -> Result {
+    fn visit_grouping(&mut self, x: &crate::ast::Grouping) -> Result<Value> {
         self._evaluate(&x.expr)
+    }
+}
+
+impl StmtVisitor<Result<()>> for &mut Interpreter {
+    fn visit_expression(&mut self, x: &crate::ast::Expression) -> Result<()> {
+        self._evaluate(&x.expr)?;
+        Ok(())
+    }
+
+    fn visit_print(&mut self, x: &crate::ast::Print) -> Result<()> {
+        println!("{}", self._evaluate(&x.expr)?);
+        Ok(())
     }
 }
 
@@ -176,21 +195,29 @@ impl Interpreter {
         Self { source: vec![] }
     }
 
-    fn _evaluate(&mut self, expr: &Expr) -> Result {
+    fn _evaluate(&mut self, expr: &Expr) -> Result<Value> {
         walk_expr(self, expr)
     }
 
-    pub fn evaluate(&mut self, source: Vec<u8>, expr: &Expr) -> Result {
-        self.source = source;
-        self._evaluate(expr)
+    fn _interpret(&mut self, program: &[Stmt]) -> Result<()> {
+        for stmt in program {
+            walk_stmt(&mut *self, stmt)?;
+        }
+
+        Ok(())
     }
 
-    fn err_invalid_operand<S: ToString>(
+    pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result<()> {
+        self.source = source;
+        self._interpret(program)
+    }
+
+    fn err_invalid_operand<V, S: ToString>(
         &self,
         op: &Token,
         expected: &[S],
         actual: Value,
-    ) -> Result {
+    ) -> Result<V> {
         Err(Error::InvalidOperand {
             operator: op.value.clone(),
             expected: Vec::from_iter(expected.iter().map(ToString::to_string)),

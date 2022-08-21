@@ -72,11 +72,8 @@ impl Lox {
                     self.had_error = true;
                     Err(anyhow!("Parsing failed, see errors above."))
                 }
-                Ok(ast) => match interpreter.evaluate(source, &ast) {
-                    Ok(v) => {
-                        println!("{}", v);
-                        Ok(())
-                    }
+                Ok(ast) => match interpreter.interpret(source, &ast) {
+                    Ok(()) => Ok(()),
                     Err(e) => {
                         self.had_runtime_error = true;
                         Err(anyhow!(e))

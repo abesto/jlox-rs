@@ -24,7 +24,17 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 // TODO error on leftover tokens
 
-/// expression = comma ;
+/// program      = declaration* EOF ;
+///
+/// declaration  = varDecl
+///              | statement ;
+/// varDecl      = "var" IDENTIFIER ( "=" expression )? ";" ;
+///
+/// statement    = exprStmt | printStmt;
+/// exprStmt     = expression ";" ;
+/// printStmt    = "print" expression ";" ;
+///
+/// expression   = comma ;
 /// comma        = ternary ( ( "," ) ternary )* ;
 /// ternary      = equality ( "?" expression ":" expression )*;
 /// equality     = comparison ( ( "!=" | "==" ) comparison )*
@@ -34,7 +44,8 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// unary        = ( "!" | "-" ) unary
 ///              | primary ;
 /// primary      = NUMBER | STRING | "true" | "false" | "nil"
-///              | "(" expression ")" ;
+///              | "(" expression ")"
+///              | IDENTIFIER ;
 pub struct Parser<'a> {
     source: &'a [u8], // To resolve code locations for error reporting
     tokens: Vec<Token>,
@@ -53,19 +64,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Expr, Vec<Error>> {
-        match self.expression() {
-            Ok(r) => {
-                if self.errors.is_empty() {
-                    Ok(r)
-                } else {
-                    Err(std::mem::take(&mut self.errors))
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, Vec<Error>> {
+        let mut statements = vec![];
+
+        while !self.is_at_end() {
+            match self.statement() {
+                Ok(s) => {
+                    statements.push(s);
+                }
+                Err(e) => {
+                    self.errors.push(e);
+                    return Err(std::mem::take(&mut self.errors));
                 }
             }
-            Err(e) => {
-                self.errors.push(e);
-                Err(std::mem::take(&mut self.errors))
-            }
+        }
+
+        if self.errors.is_empty() {
+            Ok(statements)
+        } else {
+            Err(std::mem::take(&mut self.errors))
         }
     }
 
@@ -113,6 +130,26 @@ impl<'a> Parser<'a> {
 
     fn peek(&self) -> &Token {
         &self.tokens[self.current]
+    }
+
+    fn statement(&mut self) -> Result<Stmt> {
+        if self.match_(&[TV::Print]) {
+            self.print_statement()
+        } else {
+            self.expression_statement()
+        }
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt> {
+        let expr = self.expression()?;
+        self.consume(&TV::Semicolon, "Expected `;` after value")?;
+        Ok(Stmt::Print(Print { expr }))
+    }
+
+    fn expression_statement(&mut self) -> Result<Stmt> {
+        let expr = self.expression()?;
+        self.consume(&TV::Semicolon, "Expected `;` after expression")?;
+        Ok(Stmt::Expression(Expression { expr }))
     }
 
     fn expression(&mut self) -> Result<Expr> {
@@ -278,15 +315,21 @@ mod test {
     use super::*;
     use crate::scanner::Scanner;
 
-    fn parses_to(input: &str, expected: &str) {
-        let tokens = Scanner::new(input.as_bytes()).scan_tokens().unwrap();
-        let expr = Parser::new(input.as_bytes(), tokens).parse().unwrap();
+    fn expr_parses_to(input: &str, expected: &str) {
+        let tokens = Scanner::new(format!("{};", input).as_bytes())
+            .scan_tokens()
+            .unwrap();
+        let statements = Parser::new(input.as_bytes(), tokens).parse().unwrap();
+        let expr = match &statements[0] {
+            Stmt::Expression(Expression { expr }) => expr,
+            _ => unreachable!(),
+        };
         assert_eq!(expected, format!("{}", expr));
     }
 
     #[test]
     fn test_expression() {
-        parses_to(
+        expr_parses_to(
             "1 + 2, (3 + 4) * 5 / 6 == 7",
             "((1 + 2) , (((((3 + 4)) * 5) / 6) == 7))",
         );
@@ -294,28 +337,28 @@ mod test {
 
     #[test]
     fn test_math_left_assoc() {
-        parses_to("1 + 2 - 3 + 4", "(((1 + 2) - 3) + 4)");
-        parses_to("1 * 2 / 3 * 4", "(((1 * 2) / 3) * 4)");
+        expr_parses_to("1 + 2 - 3 + 4", "(((1 + 2) - 3) + 4)");
+        expr_parses_to("1 * 2 / 3 * 4", "(((1 * 2) / 3) * 4)");
     }
 
     #[test]
     fn test_equality_right_assoc() {
-        parses_to("1 == 2 != 3 == 4", "(((1 == 2) != 3) == 4)");
+        expr_parses_to("1 == 2 != 3 == 4", "(((1 == 2) != 3) == 4)");
     }
 
     #[test]
     fn test_comparison_right_assoc() {
-        parses_to("1 < 2 <= 3 > 4 >= 5", "((((1 < 2) <= 3) > 4) >= 5)");
+        expr_parses_to("1 < 2 <= 3 > 4 >= 5", "((((1 < 2) <= 3) > 4) >= 5)");
     }
 
     #[test]
     fn test_ternary() {
-        parses_to("1 < 2 ? 3 + 4 : 5 + 6", "((1 < 2) ? ((3 + 4)) : (5 + 6))");
+        expr_parses_to("1 < 2 ? 3 + 4 : 5 + 6", "((1 < 2) ? ((3 + 4)) : (5 + 6))");
     }
 
     #[test]
     fn test_ternary_right_assoc() {
-        parses_to("0 ? 1 + 2 : 2 ? 3 : 4", "(0 ? ((1 + 2)) : (2 ? (3) : 4))");
+        expr_parses_to("0 ? 1 + 2 : 2 ? 3 : 4", "(0 ? ((1 + 2)) : (2 ? (3) : 4))");
     }
 
     #[test]
