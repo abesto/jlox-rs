@@ -158,41 +158,6 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn _right_assoc_binary(
-        &mut self,
-        wanted_operators: &[TV],
-        operand: fn(&mut Self) -> Result<Expr>,
-    ) -> Result<Expr> {
-        self._missing_lhs(wanted_operators, operand)?;
-        let mut children = vec![operand(self)?];
-        let mut operators = vec![];
-
-        while self.match_(wanted_operators) {
-            operators.push(self.previous().clone());
-            children.push(operand(self)?);
-        }
-
-        if children.len() == 1 {
-            return Ok(children.pop().unwrap());
-        }
-
-        let mut expr = Expr::Binary(Binary {
-            right: Box::new(children.pop().unwrap()),
-            operator: operators.pop().unwrap(),
-            left: Box::new(children.pop().unwrap()),
-        });
-
-        while let Some(left) = children.pop() {
-            expr = Expr::Binary(Binary {
-                left: Box::new(left),
-                operator: operators.pop().unwrap(),
-                right: Box::new(expr),
-            })
-        }
-
-        Ok(expr)
-    }
-
     fn comma(&mut self) -> Result<Expr> {
         self._left_assoc_binary(&[TV::Comma], Self::ternary)
     }
@@ -228,11 +193,11 @@ impl<'a> Parser<'a> {
     }
 
     fn equality(&mut self) -> Result<Expr> {
-        self._right_assoc_binary(&[TV::BangEqual, TV::EqualEqual], Self::comparison)
+        self._left_assoc_binary(&[TV::BangEqual, TV::EqualEqual], Self::comparison)
     }
 
     fn comparison(&mut self) -> Result<Expr> {
-        self._right_assoc_binary(
+        self._left_assoc_binary(
             &[TV::Greater, TV::GreaterEqual, TV::Less, TV::LessEqual],
             Self::term,
         )
@@ -335,12 +300,12 @@ mod test {
 
     #[test]
     fn test_equality_right_assoc() {
-        parses_to("1 == 2 != 3 == 4", "(1 == (2 != (3 == 4)))");
+        parses_to("1 == 2 != 3 == 4", "(((1 == 2) != 3) == 4)");
     }
 
     #[test]
     fn test_comparison_right_assoc() {
-        parses_to("1 < 2 <= 3 > 4 >= 5", "(1 < (2 <= (3 > (4 >= 5))))");
+        parses_to("1 < 2 <= 3 > 4 >= 5", "((((1 < 2) <= 3) > 4) >= 5)");
     }
 
     #[test]
