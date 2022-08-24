@@ -7,3 +7,6 @@ version = "0.1.0"
 anyhow = "1.0.58"
 paste = "1.0.8"
 thiserror = "1.0.32"
+
+[dev-dependencies]
+assert_cmd = "2.0.4"
