@@ -111,3 +111,16 @@ lox_test!(undefined_variable, {
     > "print y;"
     E "Undefined variable y at 0:6"
 });
+
+lox_test!(assignment, {
+    > "var x = true;"
+    > "print x = 2;"
+    "2"
+    > "print x;"
+    "2"
+});
+
+lox_test!(assignment_undefined_variable, {
+    > "x = 2;"
+    E "Undefined variable x at 0:0"
+});

@@ -68,6 +68,10 @@ ast! {
         },
         Variable: struct {
             pub name: Token
+        },
+        Assign: struct {
+            pub name: Token,
+            pub value: Box<Expr>
         }
     }
 
@@ -106,6 +110,7 @@ impl std::fmt::Display for Expr {
             }
             Expr::Grouping(Grouping { expr }) => f.write_fmt(format_args!("({})", expr)),
             Expr::Variable(Variable { name }) => name.lexeme.fmt(f),
+            Expr::Assign(Assign { name, value }) => write!(f, "{} = {}", name, value),
         }
     }
 }

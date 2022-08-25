@@ -234,6 +234,18 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
             }),
         }
     }
+
+    fn visit_assign(&mut self, x: &crate::ast::Assign) -> Result<Value> {
+        let value = self._evaluate(&x.value)?;
+        if !self.environment.assign(&x.name, value.clone()) {
+            Err(Error::UndefinedVariable {
+                name: x.name.lexeme.clone(),
+                location: SourceLocation::new(&self.source, x.name.offset),
+            })
+        } else {
+            Ok(value)
+        }
+    }
 }
 
 impl StmtVisitor<Result<()>> for &mut Interpreter {

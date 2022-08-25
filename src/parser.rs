@@ -18,6 +18,12 @@ pub enum Error {
         operator: String,
         location: SourceLocation,
     },
+
+    #[error("Invalid assignment target at {location}: `{target}`")]
+    InvalidAssignmentTarget {
+        target: Expr,
+        location: SourceLocation,
+    },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -35,7 +41,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// printStmt    = "print" expression ";" ;
 ///
 /// expression   = comma ;
-/// comma        = ternary ( ( "," ) ternary )* ;
+/// comma        = assignment ( ( "," ) assignment )* ;
+/// assignment   = IDENTIFIER "=" assignment
+///              | ternary ;
 /// ternary      = equality ( "?" expression ":" expression )*;
 /// equality     = comparison ( ( "!=" | "==" ) comparison )*
 /// comparison   = term ( ( ">" | "<" | "<=" | ">=" ) term )* ;
@@ -243,7 +251,31 @@ impl<'a> Parser<'a> {
     }
 
     fn comma(&mut self) -> Result<Expr> {
-        self._left_assoc_binary(&[TV::Comma], Self::ternary)
+        self._left_assoc_binary(&[TV::Comma], Self::assignment)
+    }
+
+    fn assignment(&mut self) -> Result<Expr> {
+        let start = self.current;
+        let expr = self.ternary()?;
+
+        if self.match_(&[TV::Equal]) {
+            let value = self.assignment()?;
+
+            if let Expr::Variable(v) = expr {
+                let name = v.name;
+                Ok(Expr::Assign(Assign {
+                    name,
+                    value: Box::new(value),
+                }))
+            } else {
+                Err(Error::InvalidAssignmentTarget {
+                    target: expr,
+                    location: SourceLocation::new(self.source, start),
+                })
+            }
+        } else {
+            Ok(expr)
+        }
     }
 
     fn ternary(&mut self) -> Result<Expr> {
