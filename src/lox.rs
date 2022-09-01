@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use anyhow::{anyhow, Result};
+use thiserror::Error;
 
 use crate::environment::Environment;
 use crate::interpreter::{Interpreter, Value};
@@ -8,30 +8,33 @@ use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::types::ResolveErrorLocation;
 
-// TODO get rid of had_error and had_runtime_error
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("{}Scanning failed, see errors above.", .0.iter().map(|e| format!("{}\n", e)).collect::<String>())]
+    Scanner(Vec<crate::scanner::Error>),
 
-pub struct Lox {
-    had_error: bool,
-    had_runtime_error: bool,
+    #[error("{}Parsing failed, see errors above.", .0.iter().map(|e| format!("{}\n", e)).collect::<String>())]
+    Parser(Vec<crate::parser::Error>),
+
+    #[error(transparent)]
+    Runtime(#[from] crate::interpreter::Error),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
+
+type Result<T = (), E = Error> = std::result::Result<T, E>;
+
+pub struct Lox {}
 
 impl Lox {
     pub fn new() -> Self {
-        Self {
-            had_error: false,
-            had_runtime_error: false,
-        }
+        Self {}
     }
 
-    pub fn run_file(&mut self, path: &str) -> Result<()> {
+    pub fn run_file(&mut self, path: &str) -> Result {
         let contents = std::fs::read(path)?;
         self.run(&mut Interpreter::new(), contents, &mut Environment::root())?;
-        if self.had_error {
-            std::process::exit(65);
-        }
-        if self.had_runtime_error {
-            std::process::exit(70);
-        }
         Ok(())
     }
 
@@ -41,8 +44,6 @@ impl Lox {
         loop {
             print!("> ");
             std::io::stdout().flush()?;
-            self.had_error = false;
-            self.had_runtime_error = false;
             let mut line = String::new();
             if std::io::stdin().read_line(&mut line)? > 0 {
                 match self.run(&mut interpreter, line.into_bytes(), &mut environment) {
@@ -66,29 +67,24 @@ impl Lox {
         env: &mut Environment,
     ) -> Result<Option<Value>> {
         match Scanner::new(&source).scan_tokens() {
-            Err(errors) => {
-                for mut error in errors {
+            Err(mut errors) => {
+                for error in errors.iter_mut() {
                     error.resolve(&source);
-                    eprintln!("{}", error);
                 }
-                self.had_error = true;
-                Err(anyhow!("Scanning failed, see errors above."))
+                Err(Error::Scanner(errors))
             }
             Ok(tokens) => match Parser::new(tokens).parse() {
-                Err(errors) => {
-                    for mut error in errors {
+                Err(mut errors) => {
+                    for error in errors.iter_mut() {
                         error.resolve(&source);
-                        eprintln!("{}", error);
                     }
-                    self.had_error = true;
-                    Err(anyhow!("Parsing failed, see errors above."))
+                    Err(Error::Parser(errors))
                 }
                 Ok(ast) => match interpreter.interpret(&ast, env) {
                     Ok(value) => Ok(value),
                     Err(mut e) => {
-                        self.had_runtime_error = true;
                         e.resolve(&source);
-                        Err(anyhow!(e))
+                        Err(Error::Runtime(e))
                     }
                 },
             },

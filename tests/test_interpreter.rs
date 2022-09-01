@@ -172,3 +172,12 @@ lox_test!(conditional_chain, {
     > "if (false) print 1; else if (false) print 2; else print 3;"
     "3"
 });
+
+lox_test!(parsing_error_report, {
+    > "+ 3 (1 + 2) > /4 (< 1)"
+    E "LHS missing for `+` at 0:0"
+    E "LHS missing for `/` at 0:14"
+    E "LHS missing for `<` at 0:18"
+    E "Expected expression, found: `)` at 0:21"
+    E "Parsing failed, see errors above."
+});
