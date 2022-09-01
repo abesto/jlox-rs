@@ -117,6 +117,7 @@ lox_test!(assignment, {
     > "print x = 2;"
     "2"
     > "x = 3;"
+    "3"
     > "print x;"
     "3"
 });
@@ -134,4 +135,9 @@ lox_test!(lexical_scope_shadow, {
 
 lox_test!(lexical_scope_assign, {
     > "var x = \"outer\"; { x = \"inner\"; } print x; "
+});
+
+lox_test!(interpreter_prints_expression_result, {
+    > "var x = 2; x = x + 1; x;"
+    "3"
 });

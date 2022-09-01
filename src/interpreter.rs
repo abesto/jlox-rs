@@ -74,7 +74,7 @@ pub enum Error {
     },
 }
 
-pub type Result<V, E = Error> = std::result::Result<V, E>;
+pub type Result<V = Option<Value>, E = Error> = std::result::Result<V, E>;
 
 pub struct Interpreter {
     source: Vec<u8>, // To resolve code locations for error reporting
@@ -94,19 +94,20 @@ impl Interpreter {
         walk_expr(self, expr)
     }
 
-    fn _interpret(&mut self, program: &[Stmt]) -> Result<()> {
+    fn _interpret(&mut self, program: &[Stmt]) -> Result {
+        let mut ret = None;
         for stmt in program {
-            self._execute(stmt)?;
+            ret = self._execute(stmt)?;
         }
 
-        Ok(())
+        Ok(ret)
     }
 
-    fn _execute(&mut self, stmt: &Stmt) -> Result<()> {
+    fn _execute(&mut self, stmt: &Stmt) -> Result {
         walk_stmt(&mut *self, stmt)
     }
 
-    pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result<()> {
+    pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result {
         self.source = source;
         self._interpret(program)
     }
@@ -125,9 +126,12 @@ impl Interpreter {
         })
     }
 
-    fn execute_block(&mut self, statements: &[Stmt]) -> Result<()> {
+    fn execute_block(&mut self, statements: &[Stmt]) -> Result {
         replace_with_or_abort(&mut self.environment, |e| e.nested());
-        let ret = statements.iter().try_for_each(|stmt| self._execute(stmt));
+        let ret = statements
+            .iter()
+            .map(|stmt| self._execute(stmt))
+            .try_fold(None, |_, x| x);
         replace_with_or_abort(&mut self.environment, |e| e.unwind().unwrap());
         ret
     }
@@ -260,28 +264,27 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
     }
 }
 
-impl StmtVisitor<Result<()>> for &mut Interpreter {
-    fn visit_expression(&mut self, x: &crate::ast::Expression) -> Result<()> {
-        self._evaluate(&x.expr)?;
-        Ok(())
+impl StmtVisitor<Result<Option<Value>>> for &mut Interpreter {
+    fn visit_expression(&mut self, x: &crate::ast::Expression) -> Result<Option<Value>> {
+        self._evaluate(&x.expr).map(Some)
     }
 
-    fn visit_print(&mut self, x: &crate::ast::Print) -> Result<()> {
+    fn visit_print(&mut self, x: &crate::ast::Print) -> Result<Option<Value>> {
         println!("{}", self._evaluate(&x.expr)?);
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_var(&mut self, x: &crate::ast::Var) -> Result<()> {
+    fn visit_var(&mut self, x: &crate::ast::Var) -> Result<Option<Value>> {
         let value = match &x.initializer {
             Some(expr) => self._evaluate(expr)?,
             None => Value::Nil,
         };
 
         self.environment.define(&x.name.lexeme, value);
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_block(&mut self, x: &crate::ast::Block) -> Result<()> {
+    fn visit_block(&mut self, x: &crate::ast::Block) -> Result<Option<Value>> {
         self.execute_block(&x.statements)
     }
 }
