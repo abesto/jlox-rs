@@ -153,3 +153,22 @@ lox_test!(uninitialized_variable, {
     "3"
     E "Uninitialized variable y at 0:36"
 });
+
+lox_test!(conditional_if, {
+    > "var x = 1;"
+    > "if (x == 1) { print x; var y = 2; } print y;"
+    "1"
+    E "Undefined variable y at 0:42"
+});
+
+lox_test!(conditional_if_else, {
+    > "if (42) print \"yes\"; else print \"no\";"
+    "yes"
+    > "if (nil) print \"yes\"; else print \"no\";"
+    "no"
+});
+
+lox_test!(conditional_chain, {
+    > "if (false) print 1; else if (false) print 2; else print 3;"
+    "3"
+});

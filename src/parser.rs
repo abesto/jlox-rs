@@ -35,9 +35,12 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// varDecl      = "var" IDENTIFIER ( "=" expression )? ";" ;
 ///
 /// statement    = exprStmt
+///              | ifStmt
 ///              | printStmt
 ///              | block ;
 /// exprStmt     = expression ";" ;
+/// ifStmt       = "if" "(" expression ")" statement
+///                ( "else" statement )? ;
 /// printStmt    = "print" expression ";" ;
 /// block        = "{" declaration "}" ;
 ///
@@ -194,6 +197,8 @@ impl<'a> Parser<'a> {
             self.print_statement()
         } else if self.match_(&[TV::LeftBrace]) {
             self.block()
+        } else if self.match_(&[TV::If]) {
+            self.if_statement()
         } else {
             self.expression_statement()
         }
@@ -213,6 +218,23 @@ impl<'a> Parser<'a> {
         self.consume(&TV::RightBrace, "Expected `}` after block")?;
 
         Ok(Stmt::Block(Block { statements }))
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt> {
+        self.consume(&TV::LeftParen, "Expected `(` after `if`")?;
+        let condition = self.expression()?;
+        self.consume(&TV::RightParen, "Expected `)` after `if` condition")?;
+        let then_branch = self.statement()?;
+        let else_branch = if self.match_(&[TV::Else]) {
+            Some(self.statement()?)
+        } else {
+            None
+        };
+        Ok(Stmt::If(If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
+        }))
     }
 
     fn expression_statement(&mut self) -> Result<Stmt> {

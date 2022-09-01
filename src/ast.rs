@@ -82,6 +82,11 @@ ast! {
         Expression: struct {
             pub expr: Expr
         },
+        If: struct {
+            pub condition: Box<Expr>,
+            pub then_branch: Box<Stmt>,
+            pub else_branch: Option<Box<Stmt>>
+        },
         Print: struct {
             pub expr: Expr
         },

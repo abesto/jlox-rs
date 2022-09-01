@@ -275,8 +275,22 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
 }
 
 impl StmtVisitor<Result<Option<Value>>> for &mut Interpreter {
+    fn visit_block(&mut self, x: &crate::ast::Block) -> Result<Option<Value>> {
+        self.execute_block(&x.statements)
+    }
+
     fn visit_expression(&mut self, x: &crate::ast::Expression) -> Result<Option<Value>> {
         self._evaluate(&x.expr).map(Some)
+    }
+
+    fn visit_if(&mut self, x: &crate::ast::If) -> Result<Option<Value>> {
+        if self._evaluate(&x.condition)?.is_truthy() {
+            self._execute(&x.then_branch)
+        } else if let Some(branch) = &x.else_branch {
+            self._execute(branch)
+        } else {
+            Ok(None)
+        }
     }
 
     fn visit_print(&mut self, x: &crate::ast::Print) -> Result<Option<Value>> {
@@ -292,9 +306,5 @@ impl StmtVisitor<Result<Option<Value>>> for &mut Interpreter {
 
         self.environment.define(&x.name.lexeme, value);
         Ok(None)
-    }
-
-    fn visit_block(&mut self, x: &crate::ast::Block) -> Result<Option<Value>> {
-        self.execute_block(&x.statements)
     }
 }
