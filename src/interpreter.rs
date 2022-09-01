@@ -1,3 +1,4 @@
+use replace_with::replace_with_or_abort;
 use thiserror::Error;
 
 use crate::{
@@ -85,7 +86,7 @@ impl Interpreter {
     pub fn new() -> Self {
         Self {
             source: vec![],
-            environment: Environment::new(),
+            environment: Environment::root(),
         }
     }
 
@@ -95,10 +96,14 @@ impl Interpreter {
 
     fn _interpret(&mut self, program: &[Stmt]) -> Result<()> {
         for stmt in program {
-            walk_stmt(&mut *self, stmt)?;
+            self._execute(stmt)?;
         }
 
         Ok(())
+    }
+
+    fn _execute(&mut self, stmt: &Stmt) -> Result<()> {
+        walk_stmt(&mut *self, stmt)
     }
 
     pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result<()> {
@@ -118,6 +123,13 @@ impl Interpreter {
             actual,
             location: SourceLocation::new(&self.source, op.offset),
         })
+    }
+
+    fn execute_block(&mut self, statements: &[Stmt]) -> Result<()> {
+        replace_with_or_abort(&mut self.environment, |e| e.nested());
+        let ret = statements.iter().try_for_each(|stmt| self._execute(stmt));
+        replace_with_or_abort(&mut self.environment, |e| e.unwind().unwrap());
+        ret
     }
 }
 
@@ -261,11 +273,15 @@ impl StmtVisitor<Result<()>> for &mut Interpreter {
 
     fn visit_var(&mut self, x: &crate::ast::Var) -> Result<()> {
         let value = match &x.initializer {
-            Some(expr) => self._evaluate(&expr)?,
+            Some(expr) => self._evaluate(expr)?,
             None => Value::Nil,
         };
 
         self.environment.define(&x.name.lexeme, value);
         Ok(())
+    }
+
+    fn visit_block(&mut self, x: &crate::ast::Block) -> Result<()> {
+        self.execute_block(&x.statements)
     }
 }

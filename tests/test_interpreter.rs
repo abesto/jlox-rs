@@ -116,11 +116,22 @@ lox_test!(assignment, {
     > "var x = true;"
     > "print x = 2;"
     "2"
+    > "x = 3;"
     > "print x;"
-    "2"
+    "3"
 });
 
 lox_test!(assignment_undefined_variable, {
     > "x = 2;"
     E "Undefined variable x at 0:0"
+});
+
+lox_test!(lexical_scope_shadow, {
+    > "var x = \"outer\"; { var x = \"inner\"; print x; } print x;"
+    "inner"
+    "outer"
+});
+
+lox_test!(lexical_scope_assign, {
+    > "var x = \"outer\"; { x = \"inner\"; } print x; "
 });

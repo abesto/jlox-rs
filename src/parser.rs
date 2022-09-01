@@ -28,17 +28,18 @@ pub enum Error {
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-// TODO error on leftover tokens
-
 /// program      = declaration* EOF ;
 ///
 /// declaration  = varDecl
 ///              | statement ;
 /// varDecl      = "var" IDENTIFIER ( "=" expression )? ";" ;
 ///
-/// statement    = exprStmt | printStmt;
+/// statement    = exprStmt
+///              | printStmt
+///              | block ;
 /// exprStmt     = expression ";" ;
 /// printStmt    = "print" expression ";" ;
+/// block        = "{" declaration "}" ;
 ///
 /// expression   = comma ;
 /// comma        = assignment ( ( "," ) assignment )* ;
@@ -191,6 +192,8 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) -> Result<Stmt> {
         if self.match_(&[TV::Print]) {
             self.print_statement()
+        } else if self.match_(&[TV::LeftBrace]) {
+            self.block()
         } else {
             self.expression_statement()
         }
@@ -200,6 +203,16 @@ impl<'a> Parser<'a> {
         let expr = self.expression()?;
         self.consume(&TV::Semicolon, "Expected `;` after value")?;
         Ok(Stmt::Print(Print { expr }))
+    }
+
+    fn block(&mut self) -> Result<Stmt> {
+        let mut statements = vec![];
+        while !self.check(&TV::RightBrace) && !self.is_at_end() {
+            statements.push(self.declaration()?);
+        }
+        self.consume(&TV::RightBrace, "Expected `}` after block")?;
+
+        Ok(Stmt::Block(Block { statements }))
     }
 
     fn expression_statement(&mut self) -> Result<Stmt> {

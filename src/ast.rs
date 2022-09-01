@@ -76,6 +76,9 @@ ast! {
     }
 
     pub enum Stmt {
+        Block: struct {
+            pub statements: Vec<Stmt>
+        },
         Expression: struct {
             pub expr: Expr
         },
