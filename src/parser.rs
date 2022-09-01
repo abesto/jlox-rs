@@ -1,3 +1,4 @@
+use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::ast::*;
@@ -5,7 +6,7 @@ use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::types::SourceLocation;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, ResolveErrorLocation)]
 pub enum Error {
     #[error("{msg} at {location}")]
     Bad {
@@ -58,8 +59,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// primary      = NUMBER | STRING | "true" | "false" | "nil"
 ///              | "(" expression ")"
 ///              | IDENTIFIER ;
-pub struct Parser<'a> {
-    source: &'a [u8], // To resolve code locations for error reporting
+pub struct Parser {
     tokens: Vec<Token>,
     errors: Vec<Error>,
     current: usize,
@@ -84,11 +84,10 @@ where
     }
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
     #[must_use]
-    pub fn new(source: &'a [u8], tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Token>) -> Self {
         Self {
-            source,
             tokens,
             errors: vec![],
             current: 0,
@@ -137,7 +136,7 @@ impl<'a> Parser<'a> {
         } else {
             Err(Error::Bad {
                 msg: msg.to_string(),
-                location: SourceLocation::new(self.source, self.peek().offset),
+                location: SourceLocation::new(self.peek().offset),
             })
         }
     }
@@ -256,7 +255,7 @@ impl<'a> Parser<'a> {
         if self.match_(operators) {
             self.errors.push(Error::MissingLhs {
                 operator: self.previous().lexeme.clone(),
-                location: SourceLocation::new(self.source, self.previous().offset),
+                location: SourceLocation::new(self.previous().offset),
             });
             // Skip RHS
             operand(self)?;
@@ -305,7 +304,7 @@ impl<'a> Parser<'a> {
             } else {
                 Err(Error::InvalidAssignmentTarget {
                     target: expr,
-                    location: SourceLocation::new(self.source, start),
+                    location: SourceLocation::new(start),
                 })
             }
         } else {
@@ -395,7 +394,7 @@ impl<'a> Parser<'a> {
             })),
             t => Err(Error::Bad {
                 msg: format!("Expected expression, found: `{}`", t),
-                location: SourceLocation::new(self.source, self.previous().offset),
+                location: SourceLocation::new(self.previous().offset),
             }),
         }
     }
@@ -431,12 +430,13 @@ impl<'a> Parser<'a> {
 mod test {
     use super::*;
     use crate::scanner::Scanner;
+    use crate::types::ResolveErrorLocation;
 
     fn expr_parses_to(input: &str, expected: &str) {
         let tokens = Scanner::new(format!("{};", input).as_bytes())
             .scan_tokens()
             .unwrap();
-        let statements = Parser::new(input.as_bytes(), tokens).parse().unwrap();
+        let statements = Parser::new(tokens).parse().unwrap();
         let expr = match &statements[0] {
             Stmt::Expression(Expression { expr }) => expr,
             _ => unreachable!(),
@@ -482,7 +482,7 @@ mod test {
     fn test_missing_lhs() {
         let input = "+ 3 (1 + 2) > /4 (< 1)";
         let tokens = Scanner::new(input.as_bytes()).scan_tokens().unwrap();
-        let errors = Parser::new(input.as_bytes(), tokens).parse().err().unwrap();
+        let mut errors = Parser::new(tokens).parse().err().unwrap();
         assert_eq!(
             vec![
                 "LHS missing for `+` at 0:0".to_string(),
@@ -491,8 +491,11 @@ mod test {
                 "Expected expression, found: `)` at 0:21".to_string()
             ],
             errors
-                .iter()
-                .map(|e| e.to_string())
+                .iter_mut()
+                .map(|e| {
+                    e.resolve(input.as_bytes());
+                    e.to_string()
+                })
                 .collect::<Vec<String>>()
         );
     }

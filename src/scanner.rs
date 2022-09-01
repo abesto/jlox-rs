@@ -1,3 +1,4 @@
+use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::token::Token;
@@ -6,7 +7,7 @@ use crate::types::Number;
 use crate::types::SourceIndex;
 use crate::types::SourceLocation;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, ResolveErrorLocation)]
 pub enum Error {
     #[error("Invalid UTF-8 character at {location}")]
     InvalidUtf8Char { location: SourceLocation },
@@ -14,11 +15,11 @@ pub enum Error {
     #[error("Unexpected character `{c}` at {location}")]
     UnexpectedCharacter { c: char, location: SourceLocation },
 
-    #[error("Unterminated string starting at {start}")]
-    UnterminatedString { start: SourceLocation },
+    #[error("Unterminated string starting at {location}")]
+    UnterminatedString { location: SourceLocation },
 
-    #[error("Unterminated /* block comment */ starting at {start}")]
-    UnterminatedComment { start: SourceLocation },
+    #[error("Unterminated /* block comment */ starting at {location}")]
+    UnterminatedComment { location: SourceLocation },
 }
 
 pub struct Scanner<'a> {
@@ -100,10 +101,7 @@ impl<'a> Scanner<'a> {
     fn substring(&self, start: SourceIndex, end: SourceIndex) -> Result<String, Error> {
         String::from_utf8(self.source[start..end].to_vec()).map_err(|source| {
             Error::InvalidUtf8Char {
-                location: SourceLocation::new(
-                    self.source,
-                    start + source.utf8_error().valid_up_to(),
-                ),
+                location: SourceLocation::new(start + source.utf8_error().valid_up_to()),
             }
         })
     }
@@ -123,7 +121,7 @@ impl<'a> Scanner<'a> {
 
         if self.is_at_end() {
             return Err(Error::UnterminatedString {
-                start: SourceLocation::new(self.source, self.start),
+                location: SourceLocation::new(self.start),
             });
         }
 
@@ -215,7 +213,7 @@ impl<'a> Scanner<'a> {
                     }
                     if self.is_at_end() {
                         Err(Error::UnterminatedComment {
-                            start: SourceLocation::new(self.source, self.start),
+                            location: SourceLocation::new(self.start),
                         })
                     } else {
                         self.advance();
@@ -255,7 +253,7 @@ impl<'a> Scanner<'a> {
 
             c => Err(Error::UnexpectedCharacter {
                 c: c.into(),
-                location: SourceLocation::new(self.source, self.current),
+                location: SourceLocation::new(self.current),
             }),
         }
     }

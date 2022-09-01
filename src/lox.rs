@@ -6,10 +6,9 @@ use crate::environment::Environment;
 use crate::interpreter::{Interpreter, Value};
 use crate::parser::Parser;
 use crate::scanner::Scanner;
+use crate::types::ResolveErrorLocation;
 
 // TODO get rid of had_error and had_runtime_error
-// TODO it'd be better to not pass &source in to Parser and Interpreter, and instead translate offsets
-//      back to line / char here
 
 pub struct Lox {
     had_error: bool,
@@ -68,24 +67,27 @@ impl Lox {
     ) -> Result<Option<Value>> {
         match Scanner::new(&source).scan_tokens() {
             Err(errors) => {
-                for error in errors {
+                for mut error in errors {
+                    error.resolve(&source);
                     eprintln!("{}", error);
                 }
                 self.had_error = true;
                 Err(anyhow!("Scanning failed, see errors above."))
             }
-            Ok(tokens) => match Parser::new(&source, tokens).parse() {
+            Ok(tokens) => match Parser::new(tokens).parse() {
                 Err(errors) => {
-                    for error in errors {
+                    for mut error in errors {
+                        error.resolve(&source);
                         eprintln!("{}", error);
                     }
                     self.had_error = true;
                     Err(anyhow!("Parsing failed, see errors above."))
                 }
-                Ok(ast) => match interpreter.interpret(source, &ast, env) {
+                Ok(ast) => match interpreter.interpret(&ast, env) {
                     Ok(value) => Ok(value),
-                    Err(e) => {
+                    Err(mut e) => {
                         self.had_runtime_error = true;
+                        e.resolve(&source);
                         Err(anyhow!(e))
                     }
                 },
