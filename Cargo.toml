@@ -4,7 +4,6 @@ name = "jlox-rs"
 version = "0.1.0"
 
 [dependencies]
-anyhow = "1.0.58"
 macros = {path = "./macros"}
 paste = "1.0.8"
 thiserror = "1.0.32"

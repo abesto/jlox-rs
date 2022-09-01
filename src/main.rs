@@ -7,12 +7,11 @@ mod scanner;
 mod token;
 mod types;
 
-use anyhow::Result;
 use lox::Lox;
 
 use crate::lox::Error;
 
-fn main() -> Result<()> {
+fn main() {
     // Yes really manual parsing, if the book says to use a (Java) library I'll use Clap, until then we. do. it. by. The. BOOK.
     let args: Vec<String> = std::env::args().collect();
 
@@ -32,6 +31,4 @@ fn main() -> Result<()> {
     } else {
         Lox::new().run_prompt().unwrap();
     }
-
-    Ok(())
 }
