@@ -6,7 +6,6 @@ version = "0.1.0"
 [dependencies]
 anyhow = "1.0.58"
 paste = "1.0.8"
-replace_with = "0.1.7"
 thiserror = "1.0.32"
 
 [dev-dependencies]

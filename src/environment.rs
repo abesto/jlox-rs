@@ -17,54 +17,51 @@ impl From<Option<Value>> for Variable {
 }
 
 pub struct Environment {
-    enclosing: Option<Box<Environment>>,
-    values: HashMap<String, Variable>,
+    stack: Vec<HashMap<String, Variable>>,
 }
 
 impl Environment {
     #[must_use]
     pub fn root() -> Self {
         Self {
-            enclosing: None,
-            values: HashMap::new(),
+            stack: vec![HashMap::new()],
         }
     }
 
-    #[must_use]
-    pub fn nested(self) -> Self {
-        Self {
-            enclosing: Some(Box::new(self)),
-            values: HashMap::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn unwind(mut self) -> Option<Self> {
-        std::mem::take(&mut self.enclosing).map(|e| *e)
+    pub fn nested<F, T>(&mut self, f: F) -> T
+    where
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.stack.push(HashMap::new());
+        let ret = f(self);
+        self.stack.pop();
+        ret
     }
 
     pub fn define<S: ToString>(&mut self, name: S, value: Option<Value>) {
-        self.values.insert(name.to_string(), value.into());
+        self.stack
+            .last_mut()
+            .expect("Ran out of nested scopes")
+            .insert(name.to_string(), value.into());
     }
 
     #[must_use]
     pub fn assign(&mut self, name: &Token, value: Value) -> bool {
-        if !self.values.contains_key(&name.lexeme) {
-            return self
-                .enclosing
-                .as_mut()
-                .map(|enclosing| enclosing.assign(name, value))
-                .unwrap_or(false);
+        for scope in self.stack.iter_mut().rev() {
+            if scope.contains_key(&name.lexeme) {
+                scope.insert(name.lexeme.clone(), Some(value).into());
+                return true;
+            }
         }
-        self.values.insert(name.lexeme.clone(), Some(value).into());
-        true
+        false
     }
 
     pub fn get(&self, name: &Token) -> Option<&Variable> {
-        self.values.get(&name.lexeme).or_else(|| {
-            self.enclosing
-                .as_ref()
-                .and_then(|enclosing| enclosing.get(name))
-        })
+        for scope in self.stack.iter().rev() {
+            if let Some(v) = scope.get(&name.lexeme) {
+                return Some(v);
+            }
+        }
+        None
     }
 }

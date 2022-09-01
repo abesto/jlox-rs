@@ -1,4 +1,3 @@
-use replace_with::replace_with_or_abort;
 use thiserror::Error;
 
 use crate::{
@@ -84,38 +83,39 @@ pub type Result<V = Option<Value>, E = Error> = std::result::Result<V, E>;
 
 pub struct Interpreter {
     source: Vec<u8>, // To resolve code locations for error reporting
-    environment: Environment,
 }
 
 impl Interpreter {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            source: vec![],
-            environment: Environment::root(),
-        }
+        Self { source: vec![] }
     }
 
-    fn _evaluate(&mut self, expr: &Expr) -> Result<Value> {
-        walk_expr(self, expr)
+    fn _evaluate(&mut self, expr: &Expr, env: &mut Environment) -> Result<Value> {
+        walk_expr(self, expr, env)
     }
 
-    fn _interpret(&mut self, program: &[Stmt]) -> Result {
+    fn _interpret(&mut self, program: &[Stmt], env: &mut Environment) -> Result {
         let mut ret = None;
         for stmt in program {
-            ret = self._execute(stmt)?;
+            ret = self._execute(stmt, env)?;
         }
 
         Ok(ret)
     }
 
-    fn _execute(&mut self, stmt: &Stmt) -> Result {
-        walk_stmt(&mut *self, stmt)
+    fn _execute(&mut self, stmt: &Stmt, env: &mut Environment) -> Result {
+        walk_stmt(&mut *self, stmt, env)
     }
 
-    pub fn interpret(&mut self, source: Vec<u8>, program: &[Stmt]) -> Result {
+    pub fn interpret(
+        &mut self,
+        source: Vec<u8>,
+        program: &[Stmt],
+        env: &mut Environment,
+    ) -> Result {
         self.source = source;
-        self._interpret(program)
+        self._interpret(program, env)
     }
 
     fn err_invalid_operand<V, S: ToString>(
@@ -132,19 +132,18 @@ impl Interpreter {
         })
     }
 
-    fn execute_block(&mut self, statements: &[Stmt]) -> Result {
-        replace_with_or_abort(&mut self.environment, |e| e.nested());
-        let ret = statements
-            .iter()
-            .map(|stmt| self._execute(stmt))
-            .try_fold(None, |_, x| x);
-        replace_with_or_abort(&mut self.environment, |e| e.unwind().unwrap());
-        ret
+    fn _execute_block(&mut self, statements: &[Stmt], env: &mut Environment) -> Result {
+        env.nested(|block_env| {
+            statements
+                .iter()
+                .map(|stmt| self._execute(stmt, block_env))
+                .try_fold(None, |_, x| x)
+        })
     }
 }
 
-impl ExprVisitor<Result<Value>> for &mut Interpreter {
-    fn visit_literal(&mut self, x: &crate::ast::Literal) -> Result<Value> {
+impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
+    fn visit_literal(&mut self, x: &crate::ast::Literal, _: &mut Environment) -> Result<Value> {
         Ok(match x {
             Literal::Nil => Value::Nil,
             Literal::False => Value::Boolean(false),
@@ -154,8 +153,8 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
         })
     }
 
-    fn visit_unary(&mut self, x: &crate::ast::Unary) -> Result<Value> {
-        let right = self._evaluate(&x.right)?;
+    fn visit_unary(&mut self, x: &crate::ast::Unary, env: &mut Environment) -> Result<Value> {
+        let right = self._evaluate(&x.right, env)?;
 
         match x.operator.value {
             TokenValue::Minus => match right {
@@ -167,9 +166,9 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
         }
     }
 
-    fn visit_binary(&mut self, x: &crate::ast::Binary) -> Result<Value> {
-        let left = self._evaluate(&x.left)?;
-        let right = self._evaluate(&x.right)?;
+    fn visit_binary(&mut self, x: &crate::ast::Binary, env: &mut Environment) -> Result<Value> {
+        let left = self._evaluate(&x.left, env)?;
+        let right = self._evaluate(&x.right, env)?;
         let op = &x.operator;
 
         match op.value {
@@ -234,21 +233,21 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
         }
     }
 
-    fn visit_ternary(&mut self, x: &crate::ast::Ternary) -> Result<Value> {
-        let cond = self._evaluate(&x.left)?;
+    fn visit_ternary(&mut self, x: &crate::ast::Ternary, env: &mut Environment) -> Result<Value> {
+        let cond = self._evaluate(&x.left, env)?;
         if cond.is_truthy() {
-            self._evaluate(&x.mid)
+            self._evaluate(&x.mid, env)
         } else {
-            self._evaluate(&x.right)
+            self._evaluate(&x.right, env)
         }
     }
 
-    fn visit_grouping(&mut self, x: &crate::ast::Grouping) -> Result<Value> {
-        self._evaluate(&x.expr)
+    fn visit_grouping(&mut self, x: &crate::ast::Grouping, env: &mut Environment) -> Result<Value> {
+        self._evaluate(&x.expr, env)
     }
 
-    fn visit_variable(&mut self, x: &crate::ast::Variable) -> Result<Value> {
-        match self.environment.get(&x.name) {
+    fn visit_variable(&mut self, x: &crate::ast::Variable, env: &mut Environment) -> Result<Value> {
+        match env.get(&x.name) {
             Some(Variable::Value(v)) => Ok(v.clone()),
             Some(Variable::Uninitialized) => Err(Error::UninitializedVariable {
                 name: x.name.lexeme.clone(),
@@ -261,9 +260,9 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
         }
     }
 
-    fn visit_assign(&mut self, x: &crate::ast::Assign) -> Result<Value> {
-        let value = self._evaluate(&x.value)?;
-        if !self.environment.assign(&x.name, value.clone()) {
+    fn visit_assign(&mut self, x: &crate::ast::Assign, env: &mut Environment) -> Result<Value> {
+        let value = self._evaluate(&x.value, env)?;
+        if !env.assign(&x.name, value.clone()) {
             Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
                 location: SourceLocation::new(&self.source, x.name.offset),
@@ -274,37 +273,49 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
     }
 }
 
-impl StmtVisitor<Result<Option<Value>>> for &mut Interpreter {
-    fn visit_block(&mut self, x: &crate::ast::Block) -> Result<Option<Value>> {
-        self.execute_block(&x.statements)
+impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
+    fn visit_block(
+        &mut self,
+        x: &crate::ast::Block,
+        env: &mut Environment,
+    ) -> Result<Option<Value>> {
+        self._execute_block(&x.statements, env)
     }
 
-    fn visit_expression(&mut self, x: &crate::ast::Expression) -> Result<Option<Value>> {
-        self._evaluate(&x.expr).map(Some)
+    fn visit_expression(
+        &mut self,
+        x: &crate::ast::Expression,
+        env: &mut Environment,
+    ) -> Result<Option<Value>> {
+        self._evaluate(&x.expr, env).map(Some)
     }
 
-    fn visit_if(&mut self, x: &crate::ast::If) -> Result<Option<Value>> {
-        if self._evaluate(&x.condition)?.is_truthy() {
-            self._execute(&x.then_branch)
+    fn visit_if(&mut self, x: &crate::ast::If, env: &mut Environment) -> Result<Option<Value>> {
+        if self._evaluate(&x.condition, env)?.is_truthy() {
+            self._execute(&x.then_branch, env)
         } else if let Some(branch) = &x.else_branch {
-            self._execute(branch)
+            self._execute(branch, env)
         } else {
             Ok(None)
         }
     }
 
-    fn visit_print(&mut self, x: &crate::ast::Print) -> Result<Option<Value>> {
-        println!("{}", self._evaluate(&x.expr)?);
+    fn visit_print(
+        &mut self,
+        x: &crate::ast::Print,
+        env: &mut Environment,
+    ) -> Result<Option<Value>> {
+        println!("{}", self._evaluate(&x.expr, env)?);
         Ok(None)
     }
 
-    fn visit_var(&mut self, x: &crate::ast::Var) -> Result<Option<Value>> {
+    fn visit_var(&mut self, x: &crate::ast::Var, env: &mut Environment) -> Result<Option<Value>> {
         let value = match &x.initializer {
-            Some(expr) => Some(self._evaluate(expr)?),
+            Some(expr) => Some(self._evaluate(expr, env)?),
             None => None,
         };
 
-        self.environment.define(&x.name.lexeme, value);
+        env.define(&x.name.lexeme, value);
         Ok(None)
     }
 }

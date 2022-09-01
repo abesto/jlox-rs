@@ -23,16 +23,16 @@ macro_rules! ast {
                 pub enum $r { $($n: $t $b),* }
             );
 
-            pub trait [<$r Visitor>]<T> {
+            pub trait [<$r Visitor>]<T, S> {
                 $(
-                    fn [<visit_ $n:lower>](&mut self, x: &$n) -> T;
+                    fn [<visit_ $n:lower>](&mut self, x: &$n, state: &mut S) -> T;
                 )*
             }
 
-            pub fn [<walk_ $r:lower>]<T>(mut visitor: impl [<$r Visitor>]<T>, x: &$r) -> T {
+            pub fn [<walk_ $r:lower>]<T, S>(mut visitor: impl [<$r Visitor>]<T, S>, x: &$r, state: &mut S) -> T {
                 match x {
                     $(
-                        $r::$n(y) => visitor.[<visit_ $n:lower>](y)
+                        $r::$n(y) => visitor.[<visit_ $n:lower>](y, state)
                     ),*
                 }
             }
