@@ -147,3 +147,9 @@ lox_test!(interpreter_prints_expression_result, {
     > "var x = 2; x = x + 1; x;"
     "3"
 });
+
+lox_test!(uninitialized_variable, {
+    > "var x; var y; x = 3; print x; print y;"
+    "3"
+    E "Uninitialized variable y at 0:36"
+});

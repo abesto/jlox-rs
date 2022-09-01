@@ -2,9 +2,23 @@ use std::collections::HashMap;
 
 use crate::{interpreter::Value, token::Token};
 
+pub enum Variable {
+    Uninitialized,
+    Value(Value),
+}
+
+impl From<Option<Value>> for Variable {
+    fn from(x: Option<Value>) -> Self {
+        match x {
+            Some(v) => Self::Value(v),
+            None => Self::Uninitialized,
+        }
+    }
+}
+
 pub struct Environment {
     enclosing: Option<Box<Environment>>,
-    values: HashMap<String, Value>,
+    values: HashMap<String, Variable>,
 }
 
 impl Environment {
@@ -29,8 +43,8 @@ impl Environment {
         std::mem::take(&mut self.enclosing).map(|e| *e)
     }
 
-    pub fn define<S: ToString>(&mut self, name: S, value: Value) {
-        self.values.insert(name.to_string(), value);
+    pub fn define<S: ToString>(&mut self, name: S, value: Option<Value>) {
+        self.values.insert(name.to_string(), value.into());
     }
 
     #[must_use]
@@ -42,11 +56,11 @@ impl Environment {
                 .map(|enclosing| enclosing.assign(name, value))
                 .unwrap_or(false);
         }
-        self.values.insert(name.lexeme.clone(), value);
+        self.values.insert(name.lexeme.clone(), Some(value).into());
         true
     }
 
-    pub fn get(&self, name: &Token) -> Option<&Value> {
+    pub fn get(&self, name: &Token) -> Option<&Variable> {
         self.values.get(&name.lexeme).or_else(|| {
             self.enclosing
                 .as_ref()

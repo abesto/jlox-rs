@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Literal, Stmt, StmtVisitor},
-    environment::Environment,
+    environment::{Environment, Variable},
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
 };
@@ -69,6 +69,12 @@ pub enum Error {
 
     #[error("Undefined variable {name} at {location}")]
     UndefinedVariable {
+        name: String,
+        location: SourceLocation,
+    },
+
+    #[error("Uninitialized variable {name} at {location}")]
+    UninitializedVariable {
         name: String,
         location: SourceLocation,
     },
@@ -243,7 +249,11 @@ impl ExprVisitor<Result<Value>> for &mut Interpreter {
 
     fn visit_variable(&mut self, x: &crate::ast::Variable) -> Result<Value> {
         match self.environment.get(&x.name) {
-            Some(v) => Ok(v.clone()),
+            Some(Variable::Value(v)) => Ok(v.clone()),
+            Some(Variable::Uninitialized) => Err(Error::UninitializedVariable {
+                name: x.name.lexeme.clone(),
+                location: SourceLocation::new(&self.source, x.name.offset),
+            }),
             None => Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
                 location: SourceLocation::new(&self.source, x.name.offset),
@@ -276,8 +286,8 @@ impl StmtVisitor<Result<Option<Value>>> for &mut Interpreter {
 
     fn visit_var(&mut self, x: &crate::ast::Var) -> Result<Option<Value>> {
         let value = match &x.initializer {
-            Some(expr) => self._evaluate(expr)?,
-            None => Value::Nil,
+            Some(expr) => Some(self._evaluate(expr)?),
+            None => None,
         };
 
         self.environment.define(&x.name.lexeme, value);
