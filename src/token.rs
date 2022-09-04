@@ -34,6 +34,7 @@ pub enum TokenValue {
 
     // Keywords.
     And,
+    Break,
     Class,
     Else,
     False,
@@ -88,6 +89,7 @@ impl std::fmt::Display for TokenValue {
             TokenValue::String(s) => s.fmt(f),
             TokenValue::Number(n) => n.fmt(f),
             TokenValue::And => f.write_str("and"),
+            TokenValue::Break => f.write_str("break"),
             TokenValue::Class => f.write_str("class"),
             TokenValue::Else => f.write_str("else"),
             TokenValue::False => f.write_str("false"),

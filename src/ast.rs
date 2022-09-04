@@ -102,6 +102,9 @@ ast! {
         While: struct {
             pub condition: Box<Expr>,
             pub statement: Box<Stmt>
+        },
+        Break: struct {
+            pub token: Token
         }
     }
 }

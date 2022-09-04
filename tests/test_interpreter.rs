@@ -224,3 +224,13 @@ lox_test!(for_loop, {
     "2"
     "4"
 });
+
+lox_test!(break_statement, {
+    > "var x = 0; while (true) { print x; while (true) break; x = x + 1; if (x >= 3) break; }"
+    "0"
+    "1"
+    "2"
+    > "while (false) {} break;"
+    E "`break` outside loop at 0:7"
+    E "Parsing failed, see errors above."
+});

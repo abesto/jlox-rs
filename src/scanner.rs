@@ -232,6 +232,7 @@ impl<'a> Scanner<'a> {
             c @ b'_' | c if c.is_ascii_alphabetic() => {
                 self.identifier().map(|x| match x.as_str() {
                     "and" => Some(TokenValue::And),
+                    "break" => Some(TokenValue::Break),
                     "class" => Some(TokenValue::Class),
                     "else" => Some(TokenValue::Else),
                     "false" => Some(TokenValue::False),

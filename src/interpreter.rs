@@ -78,6 +78,9 @@ pub enum Error {
         name: String,
         location: SourceLocation,
     },
+
+    #[error("`break` executed without enclosing loop o.0")]
+    Break { location: SourceLocation },
 }
 
 pub type Result<V = Option<Value>, E = Error> = std::result::Result<V, E>;
@@ -325,8 +328,21 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
         env: &mut Environment,
     ) -> Result<Option<Value>> {
         while self.evaluate(&x.condition, env)?.is_truthy() {
-            self.execute(&x.statement, env)?;
+            match self.execute(&x.statement, env) {
+                Err(Error::Break { .. }) => return Ok(None),
+                x => x?,
+            };
         }
         Ok(None)
+    }
+
+    fn visit_break(
+        &mut self,
+        x: &crate::ast::Break,
+        _env: &mut Environment,
+    ) -> Result<Option<Value>> {
+        Err(Error::Break {
+            location: SourceLocation::new(x.token.offset),
+        })
     }
 }

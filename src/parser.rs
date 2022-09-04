@@ -25,6 +25,9 @@ pub enum Error {
         target: Expr,
         location: SourceLocation,
     },
+
+    #[error("`break` outside loop at {location}")]
+    BreakOutsideLoop { location: SourceLocation },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -40,6 +43,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///              | printStmt
 ///              | whileStmt
 ///              | forStmt
+///              | breakStmt ;
 ///              | block ;
 /// exprStmt     = expression ";" ;
 /// ifStmt       = "if" "(" expression ")" statement
@@ -51,6 +55,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///                    expression? ";"
 ///                    expression?
 ///                ")" statement ;
+/// breakStmt    = "break" ;
 /// block        = "{" declaration "}" ;
 ///
 /// expression   = comma ;
@@ -73,6 +78,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     errors: Vec<Error>,
     current: usize,
+    loop_depth: usize, // Used to raise a syntax error on `break` outside a loop
 }
 
 trait TokenPred {
@@ -101,6 +107,7 @@ impl Parser {
             tokens,
             errors: vec![],
             current: 0,
+            loop_depth: 0,
         }
     }
 
@@ -212,6 +219,8 @@ impl Parser {
             self.while_statement()
         } else if self.match_(&[TV::For]) {
             self.for_statement()
+        } else if self.match_(&[TV::Break]) {
+            self.break_statement()
         } else {
             self.expression_statement()
         }
@@ -254,7 +263,11 @@ impl Parser {
         self.consume(&TV::LeftParen, "Expected `(` after `while`")?;
         let condition = self.expression()?;
         self.consume(&TV::RightParen, "Expected `)` after `while` condition")?;
+
+        self.loop_depth += 1;
         let statement = self.statement()?;
+        self.loop_depth -= 1;
+
         Ok(Stmt::While(While {
             condition: Box::new(condition),
             statement: Box::new(statement),
@@ -287,7 +300,10 @@ impl Parser {
         };
         self.consume(&TV::RightParen, "Expected `)` after `for` clauses")?;
 
+        self.loop_depth += 1;
         let mut body = self.statement()?;
+        self.loop_depth -= 1;
+
         if let Some(increment) = increment {
             body = Stmt::Block(Block {
                 statements: vec![body, Stmt::Expression(Expression { expr: increment })],
@@ -304,6 +320,19 @@ impl Parser {
         }
 
         Ok(body)
+    }
+
+    fn break_statement(&mut self) -> Result<Stmt> {
+        if self.loop_depth == 0 {
+            Err(Error::BreakOutsideLoop {
+                location: SourceLocation::new(self.current),
+            })
+        } else {
+            self.consume(&TV::Semicolon, "Expected `;` after `break`")?;
+            Ok(Stmt::Break(Break {
+                token: self.previous().clone(),
+            }))
+        }
     }
 
     fn expression_statement(&mut self) -> Result<Stmt> {
