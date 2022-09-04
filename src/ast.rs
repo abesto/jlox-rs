@@ -98,6 +98,10 @@ ast! {
         Var: struct {
             pub name: Token,
             pub initializer: Option<Box<Expr>>
+        },
+        While: struct {
+            pub condition: Box<Expr>,
+            pub statement: Box<Stmt>
         }
     }
 }

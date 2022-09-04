@@ -262,7 +262,7 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
 
     fn visit_logical(&mut self, x: &crate::ast::Logical, env: &mut Environment) -> Result<Value> {
         let left = self.evaluate(&x.left, env)?;
-        if &x.operator.value == &TokenValue::Or {
+        if x.operator.value == TokenValue::Or {
             if left.is_truthy() {
                 return Ok(left);
             }
@@ -317,5 +317,17 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
 
         env.define(&x.name.lexeme, value);
         Ok(None)
+    }
+
+    fn visit_while(
+        &mut self,
+        x: &crate::ast::While,
+        env: &mut Environment,
+    ) -> Result<Option<Value>> {
+        let mut ret = None;
+        while self.evaluate(&x.condition, env)?.is_truthy() {
+            ret = self.execute(&x.statement, env)?;
+        }
+        Ok(ret)
     }
 }

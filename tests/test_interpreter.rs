@@ -208,3 +208,12 @@ lox_test!(short_circuit_logical, {
     > "1 == 2 and 3 or 4;"
     "4"
 });
+
+lox_test!(while_loop, {
+    > "var i = 0;"
+    > "while (i < 3) { print i; i = i + 1; } print \"done\";"
+    "0"
+    "1"
+    "2"
+    "done"
+});

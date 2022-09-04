@@ -38,11 +38,13 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// statement    = exprStmt
 ///              | ifStmt
 ///              | printStmt
+///              | whileStmt
 ///              | block ;
 /// exprStmt     = expression ";" ;
 /// ifStmt       = "if" "(" expression ")" statement
 ///                ( "else" statement )? ;
 /// printStmt    = "print" expression ";" ;
+/// whileStmt    = "while" "(" expression ")" statement ;
 /// block        = "{" declaration "}" ;
 ///
 /// expression   = comma ;
@@ -200,6 +202,8 @@ impl Parser {
             self.block()
         } else if self.match_(&[TV::If]) {
             self.if_statement()
+        } else if self.match_(&[TV::While]) {
+            self.while_statement()
         } else {
             self.expression_statement()
         }
@@ -235,6 +239,17 @@ impl Parser {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch: else_branch.map(Box::new),
+        }))
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt> {
+        self.consume(&TV::LeftParen, "Expected `(` after `while`")?;
+        let condition = self.expression()?;
+        self.consume(&TV::RightParen, "Expected `)` after `while` condition")?;
+        let statement = self.statement()?;
+        Ok(Stmt::While(While {
+            condition: Box::new(condition),
+            statement: Box::new(statement),
         }))
     }
 
