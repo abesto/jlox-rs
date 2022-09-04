@@ -49,7 +49,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// comma        = assignment ( ( "," ) assignment )* ;
 /// assignment   = IDENTIFIER "=" assignment
 ///              | ternary ;
-/// ternary      = equality ( "?" expression ":" expression )*;
+/// ternary      = logic_or ( "?" expression ":" expression )* ;
+/// logic_or     = logic_and ( "or" logic_and )* ;
+/// logic_and    = equality ( "and" equality )* ;
 /// equality     = comparison ( ( "!=" | "==" ) comparison )*
 /// comparison   = term ( ( ">" | "<" | "<=" | ">=" ) term )* ;
 /// term         = factor ( ( "-" | "+" ) factor )* ;
@@ -313,7 +315,7 @@ impl Parser {
     }
 
     fn ternary(&mut self) -> Result<Expr> {
-        let mut children = vec![self.equality()?];
+        let mut children = vec![self.or()?];
 
         while self.match_(&[TV::Question]) {
             children.push(self.expression()?);
@@ -336,6 +338,38 @@ impl Parser {
                 mid: Box::new(children.pop().unwrap()),
                 left: Box::new(children.pop().unwrap()),
                 right: Box::new(expr),
+            });
+        }
+
+        Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expr> {
+        let mut expr = self.and()?;
+
+        while self.match_(&[TV::Or]) {
+            let operator = self.previous().clone();
+            let right = self.and()?;
+            expr = Expr::Logical(Logical {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expr> {
+        let mut expr = self.equality()?;
+
+        while self.match_(&[TV::And]) {
+            let operator = self.previous().clone();
+            let right = self.equality()?;
+            expr = Expr::Logical(Logical {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
             });
         }
 

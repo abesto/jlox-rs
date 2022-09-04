@@ -32,14 +32,16 @@ impl Lox {
         let expected = expected.as_ref();
         let mut buf = vec![b'\0'; expected.len()];
         self.stdout.read_exact(&mut buf).unwrap();
-        assert_eq!(expected, std::str::from_utf8(&buf).unwrap());
+        let s = std::str::from_utf8(&buf).unwrap();
+        assert_eq!(expected, s);
     }
 
     fn assert_stderr<S: AsRef<str>>(&mut self, expected: S) {
         let expected = expected.as_ref();
         let mut buf = vec![b'\0'; expected.len()];
         self.stderr.read_exact(&mut buf).unwrap();
-        assert_eq!(expected, std::str::from_utf8(&buf).unwrap());
+        let s = std::str::from_utf8(&buf).unwrap();
+        assert_eq!(expected, s);
     }
 
     fn writeln<S: AsRef<str>>(&mut self, s: S) {
@@ -48,14 +50,8 @@ impl Lox {
         stdin.write_all(b"\n").unwrap();
         stdin.flush().unwrap();
     }
-}
 
-impl Drop for Lox {
-    fn drop(&mut self) {
-        let mut child = std::mem::take(&mut self.child).unwrap();
-        drop(std::mem::take(&mut self.stdin).unwrap());
-        child.wait().unwrap();
-
+    fn assert_stderr_consumed(&mut self) {
         let mut buf = vec![];
         self.stderr.read_to_end(&mut buf).unwrap();
         assert_eq!(
@@ -63,6 +59,27 @@ impl Drop for Lox {
             std::str::from_utf8(buf.as_slice()).unwrap(),
             "Unconsumed STDERR"
         );
+    }
+
+    fn assert_stdout_consumed(&mut self) {
+        let mut buf = vec![];
+        self.stdout.read_to_end(&mut buf).unwrap();
+        assert_eq!(
+            "",
+            std::str::from_utf8(buf.as_slice()).unwrap(),
+            "Unconsumed STDOUT"
+        );
+    }
+}
+
+impl Drop for Lox {
+    fn drop(&mut self) {
+        let mut child = std::mem::take(&mut self.child).unwrap();
+        drop(std::mem::take(&mut self.stdin).unwrap());
+        child.wait().unwrap();
+        self.assert_stderr_consumed();
+        self.assert_stdout("> ");
+        self.assert_stdout_consumed();
     }
 }
 
@@ -135,6 +152,7 @@ lox_test!(lexical_scope_shadow, {
 
 lox_test!(lexical_scope_assign, {
     > "var x = \"outer\"; { x = \"inner\"; } print x; "
+    "inner"
 });
 
 lox_test!(lexical_scope_complex, {
@@ -180,4 +198,13 @@ lox_test!(parsing_error_report, {
     E "LHS missing for `<` at 0:18"
     E "Expected expression, found: `)` at 0:21"
     E "Parsing failed, see errors above."
+});
+
+lox_test!(short_circuit_logical, {
+    > "1 == 2 and 3;"
+    "false"
+    > "1 == 1 or 3;"
+    "true"
+    > "1 == 2 and 3 or 4;"
+    "4"
 });

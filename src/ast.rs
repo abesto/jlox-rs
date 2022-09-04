@@ -58,6 +58,11 @@ ast! {
             pub operator: Token,
             pub right: Box<Expr>,
         },
+        Logical: struct {
+            pub left: Box<Expr>,
+            pub operator: Token,
+            pub right: Box<Expr>,
+        },
         Ternary: struct {
             pub left: Box<Expr>,
             pub mid: Box<Expr>,
@@ -109,6 +114,11 @@ impl std::fmt::Display for Expr {
                 f.write_fmt(format_args!("{}{}", operator, right))
             }
             Expr::Binary(Binary {
+                left,
+                operator,
+                right,
+            }) => f.write_fmt(format_args!("({} {} {})", left, operator, right)),
+            Expr::Logical(Logical {
                 left,
                 operator,
                 right,
