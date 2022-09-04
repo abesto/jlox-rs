@@ -217,3 +217,10 @@ lox_test!(while_loop, {
     "2"
     "done"
 });
+
+lox_test!(for_loop, {
+    > "for (var i = 0; i < 5; i = i + 2) print i;"
+    "0"
+    "2"
+    "4"
+});

@@ -324,10 +324,9 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
         x: &crate::ast::While,
         env: &mut Environment,
     ) -> Result<Option<Value>> {
-        let mut ret = None;
         while self.evaluate(&x.condition, env)?.is_truthy() {
-            ret = self.execute(&x.statement, env)?;
+            self.execute(&x.statement, env)?;
         }
-        Ok(ret)
+        Ok(None)
     }
 }
