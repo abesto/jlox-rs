@@ -244,3 +244,8 @@ lox_test!(call_non_callable, {
     > "13();"
     E "Can only call functions and classes, tried to call: `13` of type `Number` at 0:3"
 });
+
+lox_test!(wrong_arity, {
+    > "clock(12);"
+    E "Expected 0 arguments but got 1 at 0:8"
+});
