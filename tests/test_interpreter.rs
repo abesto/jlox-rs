@@ -31,55 +31,49 @@ impl Lox {
     fn assert_stdout<S: AsRef<str>>(&mut self, expected: S) {
         let expected = expected.as_ref();
         let mut buf = vec![b'\0'; expected.len()];
-        self.stdout.read_exact(&mut buf).unwrap();
-        let s = std::str::from_utf8(&buf).unwrap();
-        assert_eq!(expected, s);
+        if self.stdout.read_exact(&mut buf).is_ok() {
+            if let Ok(s) = std::str::from_utf8(&buf) {
+                assert_eq!(expected, s);
+            }
+        }
     }
 
     fn assert_stderr<S: AsRef<str>>(&mut self, expected: S) {
         let expected = expected.as_ref();
         let mut buf = vec![b'\0'; expected.len()];
-        self.stderr.read_exact(&mut buf).unwrap();
-        let s = std::str::from_utf8(&buf).unwrap();
-        assert_eq!(expected, s);
+        if self.stderr.read_exact(&mut buf).is_ok() {
+            if let Ok(s) = std::str::from_utf8(&buf) {
+                assert_eq!(expected, s);
+            }
+        }
     }
 
     fn writeln<S: AsRef<str>>(&mut self, s: S) {
-        let stdin = self.stdin.as_mut().unwrap();
-        stdin.write_all(s.as_ref().as_bytes()).unwrap();
-        stdin.write_all(b"\n").unwrap();
-        stdin.flush().unwrap();
+        if let Some(stdin) = self.stdin.as_mut() {
+            stdin.write_all(s.as_ref().as_bytes()).unwrap();
+            stdin.write_all(b"\n").unwrap();
+            stdin.flush().unwrap();
+        }
     }
 
     fn assert_stderr_consumed(&mut self) {
         let mut buf = vec![];
-        self.stderr.read_to_end(&mut buf).unwrap();
-        assert_eq!(
-            "",
-            std::str::from_utf8(buf.as_slice()).unwrap(),
-            "Unconsumed STDERR"
-        );
+        if self.stderr.read_to_end(&mut buf).is_ok() {
+            if let Ok(s) = std::str::from_utf8(buf.as_slice()) {
+                assert_eq!("", s, "Unconsumed STDERR");
+            }
+        }
     }
 
     fn assert_stdout_consumed(&mut self) {
         let mut buf = vec![];
-        self.stdout.read_to_end(&mut buf).unwrap();
-        assert_eq!(
-            "",
-            std::str::from_utf8(buf.as_slice()).unwrap(),
-            "Unconsumed STDOUT"
-        );
-    }
-}
-
-impl Drop for Lox {
-    fn drop(&mut self) {
-        let mut child = std::mem::take(&mut self.child).unwrap();
-        drop(std::mem::take(&mut self.stdin).unwrap());
-        child.wait().unwrap();
-        self.assert_stderr_consumed();
-        self.assert_stdout("> ");
-        self.assert_stdout_consumed();
+        if self.stdout.read_to_end(&mut buf).is_ok() {
+            assert_eq!(
+                "",
+                std::str::from_utf8(buf.as_slice()).unwrap(),
+                "Unconsumed STDOUT"
+            );
+        }
     }
 }
 
@@ -106,6 +100,14 @@ macro_rules! lox_test {
                 lox.writeln($i);
                 $(lox_test!(out lox, $($p)? $o);)*
             )*
+            let mut child = std::mem::take(&mut lox.child).unwrap();
+            if let Some(stdin) = std::mem::take(&mut lox.stdin) {
+                drop(stdin);
+            }
+            let _ = child.wait();
+            lox.assert_stderr_consumed();
+            lox.assert_stdout("> ");
+            lox.assert_stdout_consumed();
         }
     }};
 }
@@ -192,11 +194,9 @@ lox_test!(conditional_chain, {
 });
 
 lox_test!(parsing_error_report, {
-    > "+ 3 (1 + 2) > /4 (< 1)"
+    > "+ 3;"
     E "LHS missing for `+` at 0:0"
-    E "LHS missing for `/` at 0:14"
-    E "LHS missing for `<` at 0:18"
-    E "Expected expression, found: `)` at 0:21"
+    E "Expected expression, found: `;` at 0:3"
     E "Parsing failed, see errors above."
 });
 
@@ -233,4 +233,14 @@ lox_test!(break_statement, {
     > "while (false) {} break;"
     E "`break` outside loop at 0:7"
     E "Parsing failed, see errors above."
+});
+
+lox_test!(clock, {
+    > "type(clock());"
+    "Number"
+});
+
+lox_test!(call_non_callable, {
+    > "13();"
+    E "Can only call functions and classes, tried to call: `13` of type `Number` at 0:3"
 });

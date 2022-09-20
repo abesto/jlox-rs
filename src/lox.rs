@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
@@ -32,15 +33,49 @@ impl Lox {
         Self {}
     }
 
+    fn prepare_global_env() -> Environment {
+        let mut env = Environment::root();
+        env.define(
+            "clock",
+            Some(Value::NativeFunction {
+                name: "clock".to_string(),
+                arity: 0,
+                fun: |_, _, _| {
+                    Value::Number(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs_f64(),
+                    )
+                },
+            }),
+        );
+
+        env.define(
+            "type",
+            Some(Value::NativeFunction {
+                name: "type".to_string(),
+                arity: 1,
+                fun: |_, _, args| Value::String(args[0].type_of()),
+            }),
+        );
+
+        env
+    }
+
     pub fn run_file(&mut self, path: &str) -> Result {
         let contents = std::fs::read(path)?;
-        self.run(&mut Interpreter::new(), contents, &mut Environment::root())?;
+        self.run(
+            &mut Interpreter::new(),
+            contents,
+            &mut Self::prepare_global_env(),
+        )?;
         Ok(())
     }
 
     pub fn run_prompt(&mut self) -> Result<()> {
         let mut interpreter = Interpreter::new();
-        let mut environment = Environment::root();
+        let mut environment = Self::prepare_global_env();
         loop {
             print!("> ");
             std::io::stdout().flush()?;

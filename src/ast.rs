@@ -58,6 +58,11 @@ ast! {
             pub operator: Token,
             pub right: Box<Expr>,
         },
+        Call: struct {
+            pub callee: Box<Expr>,
+            pub closing_paren: Token,
+            pub arguments: Vec<Expr>,
+        },
         Logical: struct {
             pub left: Box<Expr>,
             pub operator: Token,
@@ -136,6 +141,19 @@ impl std::fmt::Display for Expr {
             Expr::Grouping(Grouping { expr }) => f.write_fmt(format_args!("({})", expr)),
             Expr::Variable(Variable { name }) => name.lexeme.fmt(f),
             Expr::Assign(Assign { name, value }) => write!(f, "{} = {}", name, value),
+            Expr::Call(Call {
+                callee, arguments, ..
+            }) => {
+                write!(f, "{}(", callee)?;
+                let mut iter = arguments.iter().peekable();
+                while let Some(x) = iter.next() {
+                    write!(f, "{}", x)?;
+                    if iter.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }

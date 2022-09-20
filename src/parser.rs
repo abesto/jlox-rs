@@ -28,6 +28,9 @@ pub enum Error {
 
     #[error("`break` outside loop at {location}")]
     BreakOutsideLoop { location: SourceLocation },
+
+    #[error("Can't have more than 255 arguments. Call site: {location}")]
+    TooManyArguments { location: SourceLocation },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -70,7 +73,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// term         = factor ( ( "-" | "+" ) factor )* ;
 /// factor       = unary ( ( "/" | "*" ) unary )* ;
 /// unary        = ( "!" | "-" ) unary
-///              | primary ;
+///              | call ;
+/// call         = primary ( "(" arguments ")" )* ;
+/// arguments    = expression ( "," expression )* ;
 /// primary      = NUMBER | STRING | "true" | "false" | "nil"
 ///              | "(" expression ")"
 ///              | IDENTIFIER ;
@@ -153,7 +158,7 @@ impl Parser {
         } else {
             Err(Error::Bad {
                 msg: msg.to_string(),
-                location: SourceLocation::new(self.peek().offset),
+                location: self.peek().offset.into(),
             })
         }
     }
@@ -325,7 +330,7 @@ impl Parser {
     fn break_statement(&mut self) -> Result<Stmt> {
         if self.loop_depth == 0 {
             Err(Error::BreakOutsideLoop {
-                location: SourceLocation::new(self.current),
+                location: self.current.into(),
             })
         } else {
             self.consume(&TV::Semicolon, "Expected `;` after `break`")?;
@@ -354,7 +359,7 @@ impl Parser {
         if self.match_(operators) {
             self.errors.push(Error::MissingLhs {
                 operator: self.previous().lexeme.clone(),
-                location: SourceLocation::new(self.previous().offset),
+                location: self.previous().offset.into(),
             });
             // Skip RHS
             operand(self)?;
@@ -403,7 +408,7 @@ impl Parser {
             } else {
                 Err(Error::InvalidAssignmentTarget {
                     target: expr,
-                    location: SourceLocation::new(start),
+                    location: start.into(),
                 })
             }
         } else {
@@ -501,8 +506,46 @@ impl Parser {
                 right: Box::new(right),
             }))
         } else {
-            self.primary()
+            self.call()
         }
+    }
+
+    fn call(&mut self) -> Result<Expr> {
+        let mut expr = self.primary()?;
+
+        loop {
+            if self.match_(&[TV::LeftParen]) {
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr> {
+        let mut arguments = vec![];
+        let start = self.current;
+        if !self.check(&TV::RightParen) {
+            loop {
+                if arguments.len() >= 255 {
+                    return Err(Error::TooManyArguments {
+                        location: start.into(),
+                    });
+                }
+                arguments.push(self.expression()?);
+                if !self.match_(&[TV::Comma]) {
+                    break;
+                }
+            }
+        }
+        let paren = self.consume(&TV::RightParen, "Expected `)` after arguments.")?;
+        Ok(Expr::Call(Call {
+            callee: Box::new(callee),
+            arguments,
+            closing_paren: paren.clone(),
+        }))
     }
 
     fn primary(&mut self) -> Result<Expr> {
@@ -515,7 +558,7 @@ impl Parser {
             TV::String(s) => Ok(Expr::Literal(Literal::String(s.clone()))),
             TV::LeftParen => {
                 let expr = self.expression()?;
-                self.consume(&TV::RightParen, "Expect ')' after expression.")?;
+                self.consume(&TV::RightParen, "Expected `)` after expression.")?;
                 Ok(Expr::Grouping(Grouping {
                     expr: Box::new(expr),
                 }))
@@ -525,7 +568,7 @@ impl Parser {
             })),
             t => Err(Error::Bad {
                 msg: format!("Expected expression, found: `{}`", t),
-                location: SourceLocation::new(self.previous().offset),
+                location: self.previous().offset.into(),
             }),
         }
     }
@@ -611,15 +654,13 @@ mod test {
 
     #[test]
     fn test_missing_lhs() {
-        let input = "+ 3 (1 + 2) > /4 (< 1)";
+        let input = "+ 3;";
         let tokens = Scanner::new(input.as_bytes()).scan_tokens().unwrap();
         let mut errors = Parser::new(tokens).parse().err().unwrap();
         assert_eq!(
             vec![
                 "LHS missing for `+` at 0:0".to_string(),
-                "LHS missing for `/` at 0:14".to_string(),
-                "LHS missing for `<` at 0:18".to_string(),
-                "Expected expression, found: `)` at 0:21".to_string()
+                "Expected expression, found: `;` at 0:3".to_string()
             ],
             errors
                 .iter_mut()

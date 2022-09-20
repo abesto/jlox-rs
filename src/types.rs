@@ -35,6 +35,11 @@ impl SourceLocation {
     }
 }
 
+impl From<SourceIndex> for SourceLocation {
+    fn from(index: SourceIndex) -> Self {
+        Self::Offset(index)
+    }
+}
 pub trait ResolveErrorLocation {
     fn resolve(&mut self, source: &[u8]);
 }

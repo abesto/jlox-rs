@@ -1,3 +1,4 @@
+use derivative::Derivative;
 use macros::ResolveErrorLocation;
 use thiserror::Error;
 
@@ -8,12 +9,28 @@ use crate::{
     types::{Number, SourceLocation},
 };
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Derivative)]
+#[derivative(Debug, PartialEq, Clone)]
 pub enum Value {
     Nil,
     Boolean(bool),
     Number(Number),
     String(String),
+
+    NativeFunction {
+        name: String,
+        arity: usize,
+        #[derivative(
+            Debug = "ignore",
+            // Treat the implementation as always equal; we discriminate built-in functions by name
+            PartialEq(compare_with = "always_equals"),
+        )]
+        fun: fn(&mut Interpreter, &mut Environment, Vec<Value>) -> Value,
+    },
+}
+
+fn always_equals<T>(_: &T, _: &T) -> bool {
+    true
 }
 
 impl Value {
@@ -21,12 +38,13 @@ impl Value {
         !matches!(self, Self::Nil | Self::Boolean(false))
     }
 
-    fn type_of(&self) -> String {
+    pub fn type_of(&self) -> String {
         match self {
             Self::Nil => "Nil",
             Self::Boolean(_) => "Boolean",
             Self::Number(_) => "Number",
             Self::String(_) => "String",
+            Self::NativeFunction { .. } => "Function",
         }
         .to_string()
     }
@@ -35,6 +53,27 @@ impl Value {
         match self {
             Self::String(s) => format!("{:?}", s),
             v => format!("{}", v),
+        }
+    }
+
+    fn arity(&self) -> usize {
+        match self {
+            Value::NativeFunction { arity, .. } => *arity,
+            _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
+        }
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        env: &mut Environment,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        match self {
+            Value::NativeFunction { fun, .. } => Ok(fun(interpreter, env, args)),
+            _ => panic!(
+                "Internal error: tried to invoke non-callable; this should've been caught sooner"
+            ),
         }
     }
 }
@@ -46,6 +85,7 @@ impl std::fmt::Display for Value {
             Self::Boolean(b) => b.fmt(f),
             Self::Number(n) => n.fmt(f),
             Self::String(s) => s.fmt(f),
+            Self::NativeFunction { .. } => write!(f, "<native function>"),
         }
     }
 }
@@ -81,6 +121,19 @@ pub enum Error {
 
     #[error("`break` executed without enclosing loop o.0")]
     Break { location: SourceLocation },
+
+    #[error("Can only call functions and classes, tried to call: `{what}` of type `{}` at {location}", .what.type_of())]
+    NotCallable {
+        what: Value,
+        location: SourceLocation,
+    },
+
+    #[error("Expected {expected} arguments but got {actual} at {location}")]
+    WrongArity {
+        expected: usize,
+        actual: usize,
+        location: SourceLocation,
+    },
 }
 
 pub type Result<V = Option<Value>, E = Error> = std::result::Result<V, E>;
@@ -273,6 +326,32 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
             return Ok(left);
         }
         self.evaluate(&x.right, env)
+    }
+
+    fn visit_call(&mut self, call: &crate::ast::Call, state: &mut Environment) -> Result<Value> {
+        let callee = match self.evaluate(&call.callee, state)? {
+            f @ Value::NativeFunction { .. } => Ok(f),
+            what => Err(Error::NotCallable {
+                what,
+                location: call.closing_paren.offset.into(),
+            }),
+        }?;
+
+        let arguments = call
+            .arguments
+            .iter()
+            .map(|arg| self.evaluate(arg, state))
+            .collect::<Result<Vec<_>>>()?;
+
+        if arguments.len() != callee.arity() {
+            return Err(Error::WrongArity {
+                expected: callee.arity(),
+                actual: arguments.len(),
+                location: call.closing_paren.offset.into(),
+            });
+        }
+
+        callee.call(self, state, arguments)
     }
 }
 
