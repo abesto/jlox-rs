@@ -47,10 +47,11 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///
 /// statement    = exprStmt
 ///              | ifStmt
+///              | returnStmt
 ///              | printStmt
 ///              | whileStmt
 ///              | forStmt
-///              | breakStmt ;
+///              | breakStmt
 ///              | block ;
 /// exprStmt     = expression ";" ;
 /// ifStmt       = "if" "(" expression ")" statement
@@ -277,6 +278,8 @@ impl Parser {
             self.block()
         } else if self.match_(&[TV::If]) {
             self.if_statement()
+        } else if self.match_(&[TV::Return]) {
+            self.return_statement()
         } else if self.match_(&[TV::While]) {
             self.while_statement()
         } else if self.match_(&[TV::For]) {
@@ -318,6 +321,21 @@ impl Parser {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch: else_branch.map(Box::new),
+        }))
+    }
+
+    fn return_statement(&mut self) -> Result<Stmt> {
+        let keyword = self.previous().clone();
+        let value = if self.check(&TV::Semicolon) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+
+        self.consume(&TV::Semicolon, "Expected `;` after return value")?;
+        Ok(Stmt::Return(Return {
+            keyword,
+            value: value.map(Box::new),
         }))
     }
 

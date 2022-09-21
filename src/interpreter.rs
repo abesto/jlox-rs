@@ -150,6 +150,12 @@ pub enum Error {
         actual: usize,
         location: SourceLocation,
     },
+
+    #[error("`return` outside function at {location}")]
+    Return {
+        location: SourceLocation,
+        value: Value,
+    },
 }
 
 pub type Result<V = Option<Value>, E = Error> = std::result::Result<V, E>;
@@ -368,7 +374,10 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
             });
         }
 
-        callee.call(self, state, arguments)
+        match callee.call(self, state, arguments) {
+            Err(Error::Return { value, .. }) => Ok(value),
+            x => x,
+        }
     }
 }
 
@@ -448,5 +457,22 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
         };
         state.define(x.name.lexeme.clone(), Some(fun));
         Ok(None)
+    }
+
+    fn visit_return(
+        &mut self,
+        ret: &crate::ast::Return,
+        env: &mut Environment,
+    ) -> Result<Option<Value>> {
+        let value = if let Some(value_expr) = &ret.value {
+            self.evaluate(&value_expr, env)?
+        } else {
+            Value::Nil
+        };
+
+        Err(Error::Return {
+            location: ret.keyword.offset.into(),
+            value,
+        })
     }
 }
