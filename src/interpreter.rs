@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use derivative::Derivative;
 use macros::ResolveErrorLocation;
 use thiserror::Error;
@@ -26,7 +28,8 @@ pub enum Value {
             // Treat the implementation as always equal; we discriminate built-in functions by name
             PartialEq(compare_with = "always_equals"),
         )]
-        fun: fn(&mut Interpreter, &mut Environment, Vec<Value>) -> Value,
+        #[allow(clippy::type_complexity)]
+        fun: fn(&mut Interpreter, Rc<RefCell<Environment>>, Vec<Rc<RefCell<Value>>>) -> Value,
     },
 
     Function {
@@ -73,14 +76,16 @@ impl Value {
     fn call(
         &self,
         interpreter: &mut Interpreter,
-        env: &mut Environment,
-        args: Vec<Value>,
-    ) -> Result<Value> {
+        env: Rc<RefCell<Environment>>,
+        args: Vec<Rc<RefCell<Value>>>,
+    ) -> Result<Rc<RefCell<Value>>> {
         match self {
-            Value::NativeFunction { fun, .. } => Ok(fun(interpreter, env, args)),
-            Value::Function { declaration } => env.nested(|env| {
+            Value::NativeFunction { fun, .. } => {
+                Ok(Rc::new(RefCell::new(fun(interpreter, env, args))))
+            }
+            Value::Function { declaration } => Environment::nested(&env, |env| {
                 for (param, arg) in declaration.params.iter().zip(args) {
-                    env.define(&param.lexeme, Some(arg))
+                    env.borrow_mut().define(&param.lexeme, Some(arg))
                 }
                 interpreter
                     .execute_block(&declaration.body, env)
@@ -154,11 +159,11 @@ pub enum Error {
     #[error("`return` outside function at {location}")]
     Return {
         location: SourceLocation,
-        value: Value,
+        value: Rc<RefCell<Value>>,
     },
 }
 
-pub type Result<V = Option<Value>, E = Error> = std::result::Result<V, E>;
+pub type Result<V = Option<Rc<RefCell<Value>>>, E = Error> = std::result::Result<V, E>;
 
 pub struct Interpreter {}
 
@@ -168,19 +173,23 @@ impl Interpreter {
         Self {}
     }
 
-    fn evaluate(&mut self, expr: &Expr, env: &mut Environment) -> Result<Value> {
+    fn evaluate(
+        &mut self,
+        expr: &Expr,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
         walk_expr(self, expr, env)
     }
 
-    pub fn interpret(&mut self, program: &[Stmt], env: &mut Environment) -> Result {
+    pub fn interpret(&mut self, program: &[Stmt], env: Rc<RefCell<Environment>>) -> Result {
         let mut ret = None;
         for stmt in program {
-            ret = self.execute(stmt, env)?;
+            ret = self.execute(stmt, Rc::clone(&env))?;
         }
         Ok(ret)
     }
 
-    fn execute(&mut self, stmt: &Stmt, env: &mut Environment) -> Result {
+    fn execute(&mut self, stmt: &Stmt, env: Rc<RefCell<Environment>>) -> Result {
         walk_stmt(&mut *self, stmt, env)
     }
 
@@ -198,127 +207,175 @@ impl Interpreter {
         })
     }
 
-    fn execute_block(&mut self, statements: &[Stmt], env: &mut Environment) -> Result {
-        env.nested(|block_env| {
+    fn execute_block(&mut self, statements: &[Stmt], env: Rc<RefCell<Environment>>) -> Result {
+        Environment::nested(&env, |block_env| {
             statements
                 .iter()
-                .map(|stmt| self.execute(stmt, block_env))
+                .map(|stmt| self.execute(stmt, Rc::clone(&block_env)))
                 .try_fold(None, |_, x| x)
         })
     }
 }
 
-impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
-    fn visit_literal(&mut self, x: &crate::ast::Literal, _: &mut Environment) -> Result<Value> {
-        Ok(match x {
+impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut Interpreter {
+    fn visit_literal(
+        &mut self,
+        x: &crate::ast::Literal,
+        _: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        Ok(Rc::new(RefCell::new(match x {
             Literal::Nil => Value::Nil,
             Literal::False => Value::Boolean(false),
             Literal::True => Value::Boolean(true),
             Literal::Number(n) => Value::Number(*n),
             Literal::String(s) => Value::String(s.clone()),
-        })
+        })))
     }
 
-    fn visit_unary(&mut self, x: &crate::ast::Unary, env: &mut Environment) -> Result<Value> {
+    fn visit_unary(
+        &mut self,
+        x: &crate::ast::Unary,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
         let right = self.evaluate(&x.right, env)?;
 
         match x.operator.value {
-            TokenValue::Minus => match right {
-                Value::Number(n) => Ok(Value::Number(-n)),
-                v => self.err_invalid_operand(&x.operator, &["Number"], v),
+            TokenValue::Minus => match &*right.borrow() {
+                Value::Number(n) => Ok(Rc::new(RefCell::new(Value::Number(-n)))),
+                v => self.err_invalid_operand(&x.operator, &["Number"], v.clone()),
             },
-            TokenValue::Bang => Ok(Value::Boolean(!right.is_truthy())),
+            TokenValue::Bang => Ok(Rc::new(RefCell::new(Value::Boolean(
+                !right.borrow().is_truthy(),
+            )))),
             _ => unreachable!(),
         }
     }
 
-    fn visit_binary(&mut self, x: &crate::ast::Binary, env: &mut Environment) -> Result<Value> {
-        let left = self.evaluate(&x.left, env)?;
-        let right = self.evaluate(&x.right, env)?;
+    fn visit_binary(
+        &mut self,
+        x: &crate::ast::Binary,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        let left_rc = self.evaluate(&x.left, Rc::clone(&env))?;
+        let left = &*left_rc.borrow();
+        let right_rc = &*self.evaluate(&x.right, Rc::clone(&env))?;
+        let right = &*right_rc.borrow();
         let op = &x.operator;
 
         match &op.value {
             TokenValue::Minus => match (left, right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l - r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Number(l - r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
             TokenValue::Slash => match (left, right) {
-                (Value::Number(_), Value::Number(r)) if r == 0.0 => Err(Error::DivisionByZero {
+                (Value::Number(_), Value::Number(r)) if *r == 0.0 => Err(Error::DivisionByZero {
                     location: SourceLocation::new(op.offset),
                 }),
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l / r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Number(l / r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
             TokenValue::Star => match (left, right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l * r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Number(l * r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
-            TokenValue::Plus => match (&left, &right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l + r)),
-                (Value::String(_), _) | (_, Value::String(_)) => {
-                    Ok(Value::String(format!("{}{}", left, right)))
+            TokenValue::Plus => match (left, right) {
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Number(l + r))))
                 }
-                (Value::Number(_), _) => self.err_invalid_operand(op, &["Number", "String"], right),
-                _ => self.err_invalid_operand(op, &["Number", "String"], left),
+                (Value::String(_), _) | (_, Value::String(_)) => Ok(Rc::new(RefCell::new(
+                    Value::String(format!("{}{}", left, right)),
+                ))),
+                (Value::Number(_), _) => {
+                    self.err_invalid_operand(op, &["Number", "String"], right.clone())
+                }
+                _ => self.err_invalid_operand(op, &["Number", "String"], left.clone()),
             },
 
             TokenValue::Greater => match (left, right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l > r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Boolean(l > r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
             TokenValue::Less => match (left, right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l < r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Boolean(l < r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
             TokenValue::GreaterEqual => match (left, right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l >= r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Boolean(l >= r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
             TokenValue::LessEqual => match (left, right) {
-                (Value::Number(l), Value::Number(r)) => Ok(Value::Boolean(l <= r)),
-                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
-                (v, _) => self.err_invalid_operand(op, &["Number"], v),
+                (Value::Number(l), Value::Number(r)) => {
+                    Ok(Rc::new(RefCell::new(Value::Boolean(l <= r))))
+                }
+                (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v.clone()),
+                (v, _) => self.err_invalid_operand(op, &["Number"], v.clone()),
             },
 
-            TokenValue::EqualEqual => Ok(Value::Boolean(left == right)),
-            TokenValue::BangEqual => Ok(Value::Boolean(left != right)),
+            TokenValue::EqualEqual => Ok(Rc::new(RefCell::new(Value::Boolean(left == right)))),
+            TokenValue::BangEqual => Ok(Rc::new(RefCell::new(Value::Boolean(left != right)))),
 
             x => unreachable!("Unrecognized binary operator `{}` at {}", x, op.offset),
         }
     }
 
-    fn visit_ternary(&mut self, x: &crate::ast::Ternary, env: &mut Environment) -> Result<Value> {
-        let cond = self.evaluate(&x.left, env)?;
-        if cond.is_truthy() {
-            self.evaluate(&x.mid, env)
+    fn visit_ternary(
+        &mut self,
+        x: &crate::ast::Ternary,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        let cond = self.evaluate(&x.left, Rc::clone(&env))?;
+        if cond.borrow().is_truthy() {
+            self.evaluate(&x.mid, Rc::clone(&env))
         } else {
-            self.evaluate(&x.right, env)
+            self.evaluate(&x.right, Rc::clone(&env))
         }
     }
 
-    fn visit_grouping(&mut self, x: &crate::ast::Grouping, env: &mut Environment) -> Result<Value> {
+    fn visit_grouping(
+        &mut self,
+        x: &crate::ast::Grouping,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
         self.evaluate(&x.expr, env)
     }
 
-    fn visit_variable(&mut self, x: &crate::ast::Variable, env: &mut Environment) -> Result<Value> {
-        match env.get(&x.name) {
-            Some(Variable::Value(v)) => Ok(v.clone()),
-            Some(Variable::Uninitialized) => Err(Error::UninitializedVariable {
-                name: x.name.lexeme.clone(),
-                location: SourceLocation::new(x.name.offset),
-            }),
+    fn visit_variable(
+        &mut self,
+        x: &crate::ast::Variable,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        match env.borrow().get(&x.name) {
+            Some(var) => match &*var.borrow() {
+                Variable::Value(v) => Ok(Rc::clone(v)),
+                Variable::Uninitialized => Err(Error::UninitializedVariable {
+                    name: x.name.lexeme.clone(),
+                    location: SourceLocation::new(x.name.offset),
+                }),
+            },
             None => Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
                 location: SourceLocation::new(x.name.offset),
@@ -326,9 +383,13 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
         }
     }
 
-    fn visit_assign(&mut self, x: &crate::ast::Assign, env: &mut Environment) -> Result<Value> {
-        let value = self.evaluate(&x.value, env)?;
-        if !env.assign(&x.name, value.clone()) {
+    fn visit_assign(
+        &mut self,
+        x: &crate::ast::Assign,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        let value = self.evaluate(&x.value, Rc::clone(&env))?;
+        if !env.borrow_mut().assign(&x.name, Rc::clone(&value)) {
             Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
                 location: SourceLocation::new(x.name.offset),
@@ -338,24 +399,34 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
         }
     }
 
-    fn visit_logical(&mut self, x: &crate::ast::Logical, env: &mut Environment) -> Result<Value> {
-        let left = self.evaluate(&x.left, env)?;
+    fn visit_logical(
+        &mut self,
+        x: &crate::ast::Logical,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        let left = self.evaluate(&x.left, Rc::clone(&env))?;
         if x.operator.value == TokenValue::Or {
-            if left.is_truthy() {
+            if left.borrow().is_truthy() {
                 return Ok(left);
             }
-        } else if !left.is_truthy() {
+        } else if !left.borrow().is_truthy() {
             return Ok(left);
         }
         self.evaluate(&x.right, env)
     }
 
-    fn visit_call(&mut self, call: &crate::ast::Call, state: &mut Environment) -> Result<Value> {
-        let callee = match self.evaluate(&call.callee, state)? {
+    fn visit_call(
+        &mut self,
+        call: &crate::ast::Call,
+        state: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        let value_rc = self.evaluate(&call.callee, Rc::clone(&state))?;
+        let value = &*value_rc.borrow();
+        let callee = match value {
             f @ Value::NativeFunction { .. } => Ok(f),
             f @ Value::Function { .. } => Ok(f),
             what => Err(Error::NotCallable {
-                what,
+                what: what.clone(),
                 location: call.closing_paren.offset.into(),
             }),
         }?;
@@ -363,7 +434,7 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
         let arguments = call
             .arguments
             .iter()
-            .map(|arg| self.evaluate(arg, state))
+            .map(|arg| self.evaluate(arg, Rc::clone(&state)))
             .collect::<Result<Vec<_>>>()?;
 
         if arguments.len() != callee.arity() {
@@ -381,25 +452,35 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
     }
 }
 
-impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
+impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
+    for &mut Interpreter
+{
     fn visit_block(
         &mut self,
         x: &crate::ast::Block,
-        env: &mut Environment,
-    ) -> Result<Option<Value>> {
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         self.execute_block(&x.statements, env)
     }
 
     fn visit_expression(
         &mut self,
         x: &crate::ast::Expression,
-        env: &mut Environment,
-    ) -> Result<Option<Value>> {
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         self.evaluate(&x.expr, env).map(Some)
     }
 
-    fn visit_if(&mut self, x: &crate::ast::If, env: &mut Environment) -> Result<Option<Value>> {
-        if self.evaluate(&x.condition, env)?.is_truthy() {
+    fn visit_if(
+        &mut self,
+        x: &crate::ast::If,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
+        if self
+            .evaluate(&x.condition, Rc::clone(&env))?
+            .borrow()
+            .is_truthy()
+        {
             self.execute(&x.then_branch, env)
         } else if let Some(branch) = &x.else_branch {
             self.execute(branch, env)
@@ -411,29 +492,37 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
     fn visit_print(
         &mut self,
         x: &crate::ast::Print,
-        env: &mut Environment,
-    ) -> Result<Option<Value>> {
-        println!("{}", self.evaluate(&x.expr, env)?);
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
+        println!("{}", self.evaluate(&x.expr, env)?.borrow());
         Ok(None)
     }
 
-    fn visit_var(&mut self, x: &crate::ast::Var, env: &mut Environment) -> Result<Option<Value>> {
+    fn visit_var(
+        &mut self,
+        x: &crate::ast::Var,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         let value = match &x.initializer {
-            Some(expr) => Some(self.evaluate(expr, env)?),
+            Some(expr) => Some(self.evaluate(expr, Rc::clone(&env))?),
             None => None,
         };
 
-        env.define(&x.name.lexeme, value);
+        env.borrow_mut().define(&x.name.lexeme, value);
         Ok(None)
     }
 
     fn visit_while(
         &mut self,
         x: &crate::ast::While,
-        env: &mut Environment,
-    ) -> Result<Option<Value>> {
-        while self.evaluate(&x.condition, env)?.is_truthy() {
-            match self.execute(&x.statement, env) {
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
+        while self
+            .evaluate(&x.condition, Rc::clone(&env))?
+            .borrow()
+            .is_truthy()
+        {
+            match self.execute(&x.statement, Rc::clone(&env)) {
                 Err(Error::Break { .. }) => return Ok(None),
                 x => x?,
             };
@@ -444,30 +533,36 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
     fn visit_break(
         &mut self,
         x: &crate::ast::Break,
-        _env: &mut Environment,
-    ) -> Result<Option<Value>> {
+        _env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         Err(Error::Break {
             location: SourceLocation::new(x.token.offset),
         })
     }
 
-    fn visit_function(&mut self, x: &Function, state: &mut Environment) -> Result<Option<Value>> {
+    fn visit_function(
+        &mut self,
+        x: &Function,
+        state: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         let fun = Value::Function {
             declaration: x.clone(),
         };
-        state.define(x.name.lexeme.clone(), Some(fun));
+        state
+            .borrow_mut()
+            .define(x.name.lexeme.clone(), Some(Rc::new(RefCell::new(fun))));
         Ok(None)
     }
 
     fn visit_return(
         &mut self,
         ret: &crate::ast::Return,
-        env: &mut Environment,
-    ) -> Result<Option<Value>> {
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         let value = if let Some(value_expr) = &ret.value {
-            self.evaluate(&value_expr, env)?
+            self.evaluate(value_expr, env)?
         } else {
-            Value::Nil
+            Rc::new(RefCell::new(Value::Nil))
         };
 
         Err(Error::Return {

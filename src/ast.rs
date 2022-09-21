@@ -25,11 +25,11 @@ macro_rules! ast {
 
             pub trait [<$r Visitor>]<T, S> {
                 $(
-                    fn [<visit_ $n:lower>](&mut self, x: &$n, state: &mut S) -> T;
+                    fn [<visit_ $n:lower>](&mut self, x: &$n, state: S) -> T;
                 )*
             }
 
-            pub fn [<walk_ $r:lower>]<T, S>(mut visitor: impl [<$r Visitor>]<T, S>, x: &$r, state: &mut S) -> T {
+            pub fn [<walk_ $r:lower>]<T, S>(mut visitor: impl [<$r Visitor>]<T, S>, x: &$r, state: S) -> T {
                 match x {
                     $(
                         $r::$n(y) => visitor.[<visit_ $n:lower>](y, state)

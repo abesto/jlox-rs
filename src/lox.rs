@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::io::Write;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
@@ -33,11 +35,11 @@ impl Lox {
         Self {}
     }
 
-    fn prepare_global_env() -> Environment {
+    fn prepare_global_env() -> Rc<RefCell<Environment>> {
         let mut env = Environment::root();
         env.define(
             "clock",
-            Some(Value::NativeFunction {
+            Some(Rc::new(RefCell::new(Value::NativeFunction {
                 name: "clock".to_string(),
                 arity: 0,
                 fun: |_, _, _| {
@@ -48,19 +50,19 @@ impl Lox {
                             .as_secs_f64(),
                     )
                 },
-            }),
+            }))),
         );
 
         env.define(
             "type",
-            Some(Value::NativeFunction {
+            Some(Rc::new(RefCell::new(Value::NativeFunction {
                 name: "type".to_string(),
                 arity: 1,
-                fun: |_, _, args| Value::String(args[0].type_of()),
-            }),
+                fun: |_, _, args| Value::String(args[0].borrow().type_of()),
+            }))),
         );
 
-        env
+        Rc::new(RefCell::new(env))
     }
 
     pub fn run_file(&mut self, path: &str) -> Result {
@@ -68,20 +70,20 @@ impl Lox {
         self.run(
             &mut Interpreter::new(),
             contents,
-            &mut Self::prepare_global_env(),
+            Self::prepare_global_env(),
         )?;
         Ok(())
     }
 
     pub fn run_prompt(&mut self) -> Result<()> {
         let mut interpreter = Interpreter::new();
-        let mut environment = Self::prepare_global_env();
+        let environment = Self::prepare_global_env();
         loop {
             print!("> ");
             std::io::stdout().flush()?;
             let mut line = String::new();
             if std::io::stdin().read_line(&mut line)? > 0 {
-                match self.run(&mut interpreter, line.into_bytes(), &mut environment) {
+                match self.run(&mut interpreter, line.into_bytes(), Rc::clone(&environment)) {
                     Err(e) => {
                         eprintln!("{}", e);
                     }
@@ -99,7 +101,7 @@ impl Lox {
         &mut self,
         interpreter: &mut Interpreter,
         source: Vec<u8>,
-        env: &mut Environment,
+        env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Value>> {
         match Scanner::new(&source).scan_tokens() {
             Err(mut errors) => {
@@ -116,7 +118,7 @@ impl Lox {
                     Err(Error::Parser(errors))
                 }
                 Ok(ast) => match interpreter.interpret(&ast, env) {
-                    Ok(value) => Ok(value),
+                    Ok(value) => Ok(value.map(|v| v.borrow().clone())),
                     Err(mut e) => {
                         e.resolve(&source);
                         Err(Error::Runtime(e))
