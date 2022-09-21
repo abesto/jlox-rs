@@ -34,6 +34,7 @@ pub enum Value {
 
     Function {
         declaration: Function,
+        closure: Rc<RefCell<Environment>>,
     },
 }
 
@@ -68,7 +69,7 @@ impl Value {
     fn arity(&self) -> usize {
         match self {
             Value::NativeFunction { arity, .. } => *arity,
-            Value::Function { declaration } => declaration.params.len(),
+            Value::Function { declaration, .. } => declaration.params.len(),
             _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
         }
     }
@@ -83,7 +84,10 @@ impl Value {
             Value::NativeFunction { fun, .. } => {
                 Ok(Rc::new(RefCell::new(fun(interpreter, env, args))))
             }
-            Value::Function { declaration } => Environment::nested(&env, |env| {
+            Value::Function {
+                declaration,
+                closure,
+            } => Environment::nested(closure, |env| {
                 for (param, arg) in declaration.params.iter().zip(args) {
                     env.borrow_mut().define(&param.lexeme, Some(arg))
                 }
@@ -106,7 +110,9 @@ impl std::fmt::Display for Value {
             Self::Number(n) => n.fmt(f),
             Self::String(s) => s.fmt(f),
             Self::NativeFunction { name, .. } => write!(f, "<function {}>", name),
-            Self::Function { declaration } => write!(f, "<function {}>", declaration.name.lexeme),
+            Self::Function { declaration, .. } => {
+                write!(f, "<function {}>", declaration.name.lexeme)
+            }
         }
     }
 }
@@ -547,6 +553,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         let fun = Value::Function {
             declaration: x.clone(),
+            closure: Rc::clone(&state),
         };
         state
             .borrow_mut()

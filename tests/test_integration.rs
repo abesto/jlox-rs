@@ -315,9 +315,7 @@ repl_test!(return_outside_function, {
     E "`return` outside function at 0:0"
 });
 
-/*
 program_test!(counter_closure, "counter.lox", {
     "1"
     "2"
 });
-*/

@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{interpreter::Value, token::Token};
 
+#[derive(Debug, PartialEq)]
 pub enum Variable {
     Uninitialized,
     Value(Rc<RefCell<Value>>),
@@ -16,6 +17,7 @@ impl From<Option<Rc<RefCell<Value>>>> for Variable {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Environment {
     data: HashMap<String, Rc<RefCell<Variable>>>,
     parent: Option<Rc<RefCell<Environment>>>,
