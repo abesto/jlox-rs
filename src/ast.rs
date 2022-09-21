@@ -4,13 +4,13 @@ use crate::{token::Token, types::Number};
 
 macro_rules! ast_root {
     (pub enum $r:ident { $($n:ident: $t:ident $b:tt),* $(,)? }) => {
-        #[derive(Debug)]
+        #[derive(Debug, Clone, PartialEq)]
         pub enum $r {
             $($n($n)),*
         }
 
         $(
-            #[derive(Debug)]
+            #[derive(Debug, Clone, PartialEq)]
             pub $t $n $b
         )*
     }
@@ -91,6 +91,11 @@ ast! {
         },
         Expression: struct {
             pub expr: Expr
+        },
+        Function: struct {
+            pub name: Token,
+            pub params: Vec<Token>,
+            pub body: Vec<Stmt>,
         },
         If: struct {
             pub condition: Box<Expr>,

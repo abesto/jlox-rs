@@ -14,7 +14,26 @@ struct Lox {
 }
 
 impl Lox {
-    fn new() -> Self {
+    fn script<I, S>(args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .args(args);
+        let mut child = cmd.spawn().unwrap();
+        Lox {
+            stdin: Some(child.stdin.take().unwrap()),
+            stdout: child.stdout.take().unwrap(),
+            stderr: child.stderr.take().unwrap(),
+            child: Some(child),
+        }
+    }
+
+    fn repl() -> Self {
         let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -77,7 +96,7 @@ impl Lox {
     }
 }
 
-macro_rules! lox_test {
+macro_rules! repl_test {
     (out $lox:ident, E $o:literal) => {
         $lox.assert_stderr($o); $lox.assert_stderr("\n");
     };
@@ -94,11 +113,11 @@ macro_rules! lox_test {
     )* }) => { paste! {
         #[test]
         fn [<test_ $n>]() {
-            let mut lox = Lox::new();
+            let mut lox = Lox::repl();
             $(
                 lox.assert_stdout("> ");
                 lox.writeln($i);
-                $(lox_test!(out lox, $($p)? $o);)*
+                $(repl_test!(out lox, $($p)? $o);)*
             )*
             let mut child = std::mem::take(&mut lox.child).unwrap();
             if let Some(stdin) = std::mem::take(&mut lox.stdin) {
@@ -112,26 +131,52 @@ macro_rules! lox_test {
     }};
 }
 
-lox_test!(smoke, {
+macro_rules! program_test {
+    ($n:ident, $f:literal, {
+        $(
+            $($p:ident)? $o:literal
+        )*
+    }) => { paste! {
+            #[test]
+            fn [<test_ $n>]() {
+                let mut lox = Lox::script(&[concat!("tests/programs/", $f)]);
+
+                let mut child = std::mem::take(&mut lox.child).unwrap();
+                if let Some(stdin) = std::mem::take(&mut lox.stdin) {
+                    drop(stdin);
+                }
+                let _ = child.wait();
+
+                $(
+                    repl_test!(out lox, $($p)? $o);
+                )*
+
+                lox.assert_stderr_consumed();
+                lox.assert_stdout_consumed();
+            }
+    }};
+}
+
+repl_test!(smoke, {
     > "print 3;"
     "3"
     > "print 1 + 2 != 3 ? \"bad\" : \"good\";"
     "good"
 });
 
-lox_test!(variable_definition, {
+repl_test!(variable_definition, {
     > "var x = 3;"
     > "print x == 3;"
     "true"
 });
 
-lox_test!(undefined_variable, {
+repl_test!(undefined_variable, {
     > "var x = 4;"
     > "print y;"
     E "Undefined variable y at 0:6"
 });
 
-lox_test!(assignment, {
+repl_test!(assignment, {
     > "var x = true;"
     > "print x = 2;"
     "2"
@@ -141,66 +186,66 @@ lox_test!(assignment, {
     "3"
 });
 
-lox_test!(assignment_undefined_variable, {
+repl_test!(assignment_undefined_variable, {
     > "x = 2;"
     E "Undefined variable x at 0:0"
 });
 
-lox_test!(lexical_scope_shadow, {
+repl_test!(lexical_scope_shadow, {
     > "var x = \"outer\"; { var x = \"inner\"; print x; } print x;"
     "inner"
     "outer"
 });
 
-lox_test!(lexical_scope_assign, {
+repl_test!(lexical_scope_assign, {
     > "var x = \"outer\"; { x = \"inner\"; } print x; "
     "inner"
 });
 
-lox_test!(lexical_scope_complex, {
+repl_test!(lexical_scope_complex, {
     > "var x = \"outer\"; { var x = \"inner \" + x; print x; } print x;"
     "inner outer"
     "outer"
 });
 
-lox_test!(interpreter_prints_expression_result, {
+repl_test!(interpreter_prints_expression_result, {
     > "var x = 2; x = x + 1; x;"
     "3"
 });
 
-lox_test!(uninitialized_variable, {
+repl_test!(uninitialized_variable, {
     > "var x; var y; x = 3; print x; print y;"
     "3"
     E "Uninitialized variable y at 0:36"
 });
 
-lox_test!(conditional_if, {
+repl_test!(conditional_if, {
     > "var x = 1;"
     > "if (x == 1) { print x; var y = 2; } print y;"
     "1"
     E "Undefined variable y at 0:42"
 });
 
-lox_test!(conditional_if_else, {
+repl_test!(conditional_if_else, {
     > "if (42) print \"yes\"; else print \"no\";"
     "yes"
     > "if (nil) print \"yes\"; else print \"no\";"
     "no"
 });
 
-lox_test!(conditional_chain, {
+repl_test!(conditional_chain, {
     > "if (false) print 1; else if (false) print 2; else print 3;"
     "3"
 });
 
-lox_test!(parsing_error_report, {
+repl_test!(parsing_error_report, {
     > "+ 3;"
     E "LHS missing for `+` at 0:0"
     E "Expected expression, found: `;` at 0:3"
     E "Parsing failed, see errors above."
 });
 
-lox_test!(short_circuit_logical, {
+repl_test!(short_circuit_logical, {
     > "1 == 2 and 3;"
     "false"
     > "1 == 1 or 3;"
@@ -209,7 +254,7 @@ lox_test!(short_circuit_logical, {
     "4"
 });
 
-lox_test!(while_loop, {
+repl_test!(while_loop, {
     > "var i = 0;"
     > "while (i < 3) { print i; i = i + 1; } print \"done\";"
     "0"
@@ -218,14 +263,14 @@ lox_test!(while_loop, {
     "done"
 });
 
-lox_test!(for_loop, {
+repl_test!(for_loop, {
     > "for (var i = 0; i < 5; i = i + 2) print i;"
     "0"
     "2"
     "4"
 });
 
-lox_test!(break_statement, {
+repl_test!(break_statement, {
     > "var x = 0; while (true) { print x; while (true) break; x = x + 1; if (x >= 3) break; }"
     "0"
     "1"
@@ -235,17 +280,27 @@ lox_test!(break_statement, {
     E "Parsing failed, see errors above."
 });
 
-lox_test!(clock, {
+repl_test!(clock, {
     > "type(clock());"
     "Number"
 });
 
-lox_test!(call_non_callable, {
+repl_test!(call_non_callable, {
     > "13();"
     E "Can only call functions and classes, tried to call: `13` of type `Number` at 0:3"
 });
 
-lox_test!(wrong_arity, {
+repl_test!(wrong_arity_native, {
     > "clock(12);"
     E "Expected 0 arguments but got 1 at 0:8"
+});
+
+repl_test!(wrong_arity_user_function, {
+    > "fun f(x) {}"
+    > "f(1, 2);"
+    E "Expected 1 arguments but got 2 at 0:6"
+});
+
+program_test!(define_call_function, "sayHi.lox", {
+    "Hi, Valued Customer!"
 });

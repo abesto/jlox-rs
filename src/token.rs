@@ -54,7 +54,7 @@ pub enum TokenValue {
     Eof,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub value: TokenValue,
     pub lexeme: String,

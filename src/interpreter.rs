@@ -3,15 +3,16 @@ use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::{
-    ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Literal, Stmt, StmtVisitor},
+    ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Function, Literal, Stmt, StmtVisitor},
     environment::{Environment, Variable},
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
 };
 
 #[derive(Derivative)]
-#[derivative(Debug, PartialEq, Clone)]
+#[derivative(Debug, PartialEq, Clone, Default)]
 pub enum Value {
+    #[derivative(Default)]
     Nil,
     Boolean(bool),
     Number(Number),
@@ -26,6 +27,10 @@ pub enum Value {
             PartialEq(compare_with = "always_equals"),
         )]
         fun: fn(&mut Interpreter, &mut Environment, Vec<Value>) -> Value,
+    },
+
+    Function {
+        declaration: Function,
     },
 }
 
@@ -45,6 +50,7 @@ impl Value {
             Self::Number(_) => "Number",
             Self::String(_) => "String",
             Self::NativeFunction { .. } => "Function",
+            Self::Function { .. } => "Function",
         }
         .to_string()
     }
@@ -59,6 +65,7 @@ impl Value {
     fn arity(&self) -> usize {
         match self {
             Value::NativeFunction { arity, .. } => *arity,
+            Value::Function { declaration } => declaration.params.len(),
             _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
         }
     }
@@ -71,6 +78,14 @@ impl Value {
     ) -> Result<Value> {
         match self {
             Value::NativeFunction { fun, .. } => Ok(fun(interpreter, env, args)),
+            Value::Function { declaration } => env.nested(|env| {
+                for (param, arg) in declaration.params.iter().zip(args) {
+                    env.define(&param.lexeme, Some(arg))
+                }
+                interpreter
+                    .execute_block(&declaration.body, env)
+                    .map(Option::unwrap_or_default)
+            }),
             _ => panic!(
                 "Internal error: tried to invoke non-callable; this should've been caught sooner"
             ),
@@ -85,7 +100,8 @@ impl std::fmt::Display for Value {
             Self::Boolean(b) => b.fmt(f),
             Self::Number(n) => n.fmt(f),
             Self::String(s) => s.fmt(f),
-            Self::NativeFunction { .. } => write!(f, "<native function>"),
+            Self::NativeFunction { name, .. } => write!(f, "<function {}>", name),
+            Self::Function { declaration } => write!(f, "<function {}>", declaration.name.lexeme),
         }
     }
 }
@@ -215,7 +231,7 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
         let right = self.evaluate(&x.right, env)?;
         let op = &x.operator;
 
-        match op.value {
+        match &op.value {
             TokenValue::Minus => match (left, right) {
                 (Value::Number(l), Value::Number(r)) => Ok(Value::Number(l - r)),
                 (Value::Number(_), v) => self.err_invalid_operand(op, &["Number"], v),
@@ -273,7 +289,7 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
             TokenValue::EqualEqual => Ok(Value::Boolean(left == right)),
             TokenValue::BangEqual => Ok(Value::Boolean(left != right)),
 
-            _ => unreachable!(),
+            x => unreachable!("Unrecognized binary operator `{}` at {}", x, op.offset),
         }
     }
 
@@ -331,6 +347,7 @@ impl ExprVisitor<Result<Value>, Environment> for &mut Interpreter {
     fn visit_call(&mut self, call: &crate::ast::Call, state: &mut Environment) -> Result<Value> {
         let callee = match self.evaluate(&call.callee, state)? {
             f @ Value::NativeFunction { .. } => Ok(f),
+            f @ Value::Function { .. } => Ok(f),
             what => Err(Error::NotCallable {
                 what,
                 location: call.closing_paren.offset.into(),
@@ -423,5 +440,13 @@ impl StmtVisitor<Result<Option<Value>>, Environment> for &mut Interpreter {
         Err(Error::Break {
             location: SourceLocation::new(x.token.offset),
         })
+    }
+
+    fn visit_function(&mut self, x: &Function, state: &mut Environment) -> Result<Option<Value>> {
+        let fun = Value::Function {
+            declaration: x.clone(),
+        };
+        state.define(x.name.lexeme.clone(), Some(fun));
+        Ok(None)
     }
 }

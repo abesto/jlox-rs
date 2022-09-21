@@ -37,8 +37,12 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// program      = declaration* EOF ;
 ///
-/// declaration  = varDecl
+/// declaration  = funDecl
+///              | varDecl
 ///              | statement ;
+/// funDecl      = "fun" function ;
+/// function     = IDENTIFIER "(" parameters? ")" block ;
+/// parameters   = IDENTIFIER ( "," IDENTIFIER )* ;
 /// varDecl      = "var" IDENTIFIER ( "=" expression )? ";" ;
 ///
 /// statement    = exprStmt
@@ -185,7 +189,9 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt> {
-        let res = if self.match_(&[TV::Var]) {
+        let res = if self.match_(&[TV::Fun]) {
+            self.function("function")
+        } else if self.match_(&[TV::Var]) {
             self.var_declaration()
         } else {
             self.statement()
@@ -194,6 +200,57 @@ impl Parser {
             self.synchronize();
         }
         res
+    }
+
+    fn function(&mut self, kind: &str) -> Result<Stmt> {
+        let name = self
+            .consume(
+                &|t: &Token| matches!(t.value, TV::Identifier(_)),
+                format!("Expected {} name", kind),
+            )?
+            .clone();
+        self.consume(&TV::LeftParen, format!("Expected `(` after {} name", kind))?;
+
+        let mut params = vec![];
+        if !self.check(&TV::RightParen) {
+            loop {
+                if params.len() >= 255 {
+                    return Err(Error::TooManyArguments {
+                        location: name.offset.into(),
+                    });
+                }
+                params.push(
+                    self.consume(
+                        &|t: &Token| matches!(t.value, TV::Identifier(_)),
+                        "Expected parameter name",
+                    )?
+                    .clone(),
+                );
+
+                if !self.match_(&[TV::Comma]) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TV::RightParen, "Expected `)` after parameters")?;
+        self.consume(
+            &TV::LeftBrace,
+            format!("Expected `{{` before {} body", kind),
+        )?;
+        let body = self.block()?;
+
+        Ok(Stmt::Function(Function {
+            name,
+            params,
+            body: match body {
+                Stmt::Block(Block { statements }) => statements,
+                _ => {
+                    unreachable!(
+                        "Internal error: `Parser::block` somehow returned NOT a `Stmt::Block`"
+                    )
+                }
+            },
+        }))
     }
 
     fn var_declaration(&mut self) -> Result<Stmt> {
@@ -534,7 +591,7 @@ impl Parser {
                         location: start.into(),
                     });
                 }
-                arguments.push(self.expression()?);
+                arguments.push(self.assignment()?);
                 if !self.match_(&[TV::Comma]) {
                     break;
                 }
