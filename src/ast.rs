@@ -68,6 +68,11 @@ ast! {
             pub operator: Token,
             pub right: Box<Expr>,
         },
+        Lambda: struct {
+            pub token: Token,
+            pub params: Vec<Token>,
+            pub body: Vec<Stmt>,
+        },
         Ternary: struct {
             pub left: Box<Expr>,
             pub mid: Box<Expr>,
@@ -155,6 +160,17 @@ impl std::fmt::Display for Expr {
             }) => {
                 write!(f, "{}(", callee)?;
                 let mut iter = arguments.iter().peekable();
+                while let Some(x) = iter.next() {
+                    write!(f, "{}", x)?;
+                    if iter.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
+            Expr::Lambda(Lambda { params, .. }) => {
+                write!(f, "fun (")?;
+                let mut iter = params.iter().peekable();
                 while let Some(x) = iter.next() {
                     write!(f, "{}", x)?;
                     if iter.peek().is_some() {

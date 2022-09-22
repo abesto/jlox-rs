@@ -319,3 +319,18 @@ program_test!(counter_closure, "counter.lox", {
     "1"
     "2"
 });
+
+program_test!(lambda, "lambda.lox", {
+    "1"
+    "2"
+    "3"
+});
+
+// This one's non-trivial because naively the syntax clashes with normal function declarations.
+repl_test!(lambda_expr_statement, {
+    > "fun () {};"
+    "<anonymous function>"
+    > "fun () {}"
+    E "Expected `;` after anonymous function expression statement at 1:0"
+    E "Parsing failed, see errors above."
+});

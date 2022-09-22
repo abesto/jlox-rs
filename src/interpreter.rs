@@ -5,7 +5,7 @@ use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::{
-    ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Function, Literal, Stmt, StmtVisitor},
+    ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor},
     environment::{Environment, Variable},
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
@@ -36,6 +36,11 @@ pub enum Value {
         declaration: Function,
         closure: Rc<RefCell<Environment>>,
     },
+
+    Lambda {
+        declaration: Lambda,
+        closure: Rc<RefCell<Environment>>,
+    },
 }
 
 fn always_equals<T>(_: &T, _: &T) -> bool {
@@ -55,6 +60,7 @@ impl Value {
             Self::String(_) => "String",
             Self::NativeFunction { .. } => "Function",
             Self::Function { .. } => "Function",
+            Self::Lambda { .. } => "Function",
         }
         .to_string()
     }
@@ -69,7 +75,8 @@ impl Value {
     fn arity(&self) -> usize {
         match self {
             Value::NativeFunction { arity, .. } => *arity,
-            Value::Function { declaration, .. } => declaration.params.len(),
+            Value::Function { declaration: Function { params, .. }, .. } 
+            | Value::Lambda { declaration: Lambda { params, ..}, .. } => params.len(),
             _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
         }
     }
@@ -85,14 +92,18 @@ impl Value {
                 Ok(Rc::new(RefCell::new(fun(interpreter, env, args))))
             }
             Value::Function {
-                declaration,
+                declaration: Function { params, body, .. },
+                closure,
+            }
+            | Value::Lambda {
+                declaration: Lambda { params, body, .. },
                 closure,
             } => Environment::nested(closure, |env| {
-                for (param, arg) in declaration.params.iter().zip(args) {
+                for (param, arg) in params.iter().zip(args) {
                     env.borrow_mut().define(&param.lexeme, Some(arg))
                 }
                 interpreter
-                    .execute_block(&declaration.body, env)
+                    .execute_block(body, env)
                     .map(Option::unwrap_or_default)
             }),
             _ => panic!(
@@ -113,6 +124,7 @@ impl std::fmt::Display for Value {
             Self::Function { declaration, .. } => {
                 write!(f, "<function {}>", declaration.name.lexeme)
             }
+            Self::Lambda { .. } => write!(f, "<anonymous function>"),
         }
     }
 }
@@ -429,8 +441,9 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         let value_rc = self.evaluate(&call.callee, Rc::clone(&state))?;
         let value = &*value_rc.borrow();
         let callee = match value {
-            f @ Value::NativeFunction { .. } => Ok(f),
-            f @ Value::Function { .. } => Ok(f),
+            f @ Value::NativeFunction { .. }
+            | f @ Value::Lambda { .. }
+            | f @ Value::Function { .. } => Ok(f),
             what => Err(Error::NotCallable {
                 what: what.clone(),
                 location: call.closing_paren.offset.into(),
@@ -455,6 +468,17 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
             Err(Error::Return { value, .. }) => Ok(value),
             x => x,
         }
+    }
+
+    fn visit_lambda(
+        &mut self,
+        x: &crate::ast::Lambda,
+        state: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>> {
+        Ok(Rc::new(RefCell::new(Value::Lambda {
+            declaration: x.clone(),
+            closure: Rc::clone(&state),
+        })))
     }
 }
 

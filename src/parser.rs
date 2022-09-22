@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::ast::*;
 use crate::token::Token;
 use crate::token::TokenValue as TV;
+use crate::types::SourceIndex;
 use crate::types::SourceLocation;
 
 #[derive(Error, Debug, ResolveErrorLocation)]
@@ -68,8 +69,10 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///
 /// expression   = comma ;
 /// comma        = assignment ( ( "," ) assignment )* ;
-/// assignment   = IDENTIFIER "=" assignment
+/// assignment   = "fun" lambda
+///              | IDENTIFIER "=" assignment
 ///              | ternary ;
+/// lambda       = "(" parameters? ")" block ;
 /// ternary      = logic_or ( "?" expression ":" expression )* ;
 /// logic_or     = logic_and ( "or" logic_and )* ;
 /// logic_and    = equality ( "and" equality )* ;
@@ -204,6 +207,15 @@ impl Parser {
     }
 
     fn function(&mut self, kind: &str) -> Result<Stmt> {
+        if !self.check(&|t: &Token| matches!(t.value, TV::Identifier(_))) {
+            let lambda = self.lambda()?;
+            self.consume(
+                &TV::Semicolon,
+                "Expected `;` after anonymous function expression statement",
+            )?;
+            return Ok(Stmt::Expression(Expression { expr: lambda }));
+        }
+
         let name = self
             .consume(
                 &|t: &Token| matches!(t.value, TV::Identifier(_)),
@@ -212,12 +224,19 @@ impl Parser {
             .clone();
         self.consume(&TV::LeftParen, format!("Expected `(` after {} name", kind))?;
 
+        let params = self.parameters(name.offset)?;
+        let body = self.body(kind)?;
+
+        Ok(Stmt::Function(Function { name, params, body }))
+    }
+
+    fn parameters(&mut self, offset: SourceIndex) -> Result<Vec<Token>> {
         let mut params = vec![];
         if !self.check(&TV::RightParen) {
             loop {
                 if params.len() >= 255 {
                     return Err(Error::TooManyArguments {
-                        location: name.offset.into(),
+                        location: offset.into(),
                     });
                 }
                 params.push(
@@ -234,24 +253,20 @@ impl Parser {
             }
         }
         self.consume(&TV::RightParen, "Expected `)` after parameters")?;
+        Ok(params)
+    }
+
+    fn body(&mut self, kind: &str) -> Result<Vec<Stmt>> {
         self.consume(
             &TV::LeftBrace,
             format!("Expected `{{` before {} body", kind),
         )?;
-        let body = self.block()?;
-
-        Ok(Stmt::Function(Function {
-            name,
-            params,
-            body: match body {
-                Stmt::Block(Block { statements }) => statements,
-                _ => {
-                    unreachable!(
-                        "Internal error: `Parser::block` somehow returned NOT a `Stmt::Block`"
-                    )
-                }
-            },
-        }))
+        match self.block()? {
+            Stmt::Block(Block { statements }) => Ok(statements),
+            _ => {
+                unreachable!("Internal error: `Parser::block` somehow returned NOT a `Stmt::Block`")
+            }
+        }
     }
 
     fn var_declaration(&mut self) -> Result<Stmt> {
@@ -468,6 +483,10 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr> {
+        if self.match_(&[TV::Fun]) {
+            return self.lambda();
+        }
+
         let start = self.current;
         let expr = self.ternary()?;
 
@@ -489,6 +508,18 @@ impl Parser {
         } else {
             Ok(expr)
         }
+    }
+
+    fn lambda(&mut self) -> Result<Expr> {
+        let token = self.previous().clone();
+        self.consume(&TV::LeftParen, "Expected `(` after anonymous `fun`")?;
+        let params = self.parameters(self.current)?;
+        let body = self.body("lambda")?;
+        Ok(Expr::Lambda(Lambda {
+            token,
+            params,
+            body,
+        }))
     }
 
     fn ternary(&mut self) -> Result<Expr> {
