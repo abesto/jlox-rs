@@ -3,6 +3,7 @@ mod environment;
 mod interpreter;
 mod lox;
 mod parser;
+mod resolver;
 mod scanner;
 mod token;
 mod types;

@@ -1,7 +1,7 @@
 pub type SourceIndex = usize;
 pub type Number = f64;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum SourceLocation {
     Offset(SourceIndex),
     Resolved {

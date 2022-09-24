@@ -5,7 +5,7 @@ use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::{
-    ast::{walk_expr, walk_stmt, Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor},
+    ast::{Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor, Walkable},
     environment::{Environment, Variable},
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
@@ -196,7 +196,7 @@ impl Interpreter {
         expr: &Expr,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
-        walk_expr(self, expr, env)
+        expr.walk(self, env)
     }
 
     pub fn interpret(&mut self, program: &[Stmt], env: Rc<RefCell<Environment>>) -> Result {
@@ -208,7 +208,7 @@ impl Interpreter {
     }
 
     fn execute(&mut self, stmt: &Stmt, env: Rc<RefCell<Environment>>) -> Result {
-        walk_stmt(&mut *self, stmt, env)
+        stmt.walk(self, env)
     }
 
     fn err_invalid_operand<V, S: ToString>(
@@ -237,7 +237,7 @@ impl Interpreter {
 
 impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut Interpreter {
     fn visit_literal(
-        &mut self,
+        self,
         x: &crate::ast::Literal,
         _: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -251,7 +251,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_unary(
-        &mut self,
+        self,
         x: &crate::ast::Unary,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -270,7 +270,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_binary(
-        &mut self,
+        self,
         x: &crate::ast::Binary,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -361,7 +361,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_ternary(
-        &mut self,
+        self,
         x: &crate::ast::Ternary,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -374,7 +374,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_grouping(
-        &mut self,
+        self,
         x: &crate::ast::Grouping,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -382,7 +382,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_variable(
-        &mut self,
+        self,
         x: &crate::ast::Variable,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -402,7 +402,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_assign(
-        &mut self,
+        self,
         x: &crate::ast::Assign,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -418,7 +418,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_logical(
-        &mut self,
+        self,
         x: &crate::ast::Logical,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -434,7 +434,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_call(
-        &mut self,
+        self,
         call: &crate::ast::Call,
         state: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -471,7 +471,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     }
 
     fn visit_lambda(
-        &mut self,
+        self,
         x: &crate::ast::Lambda,
         state: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
@@ -486,7 +486,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     for &mut Interpreter
 {
     fn visit_block(
-        &mut self,
+        self,
         x: &crate::ast::Block,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -494,7 +494,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_expression(
-        &mut self,
+        self,
         x: &crate::ast::Expression,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -502,7 +502,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_if(
-        &mut self,
+        self,
         x: &crate::ast::If,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -520,7 +520,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_print(
-        &mut self,
+        self,
         x: &crate::ast::Print,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -529,7 +529,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_var(
-        &mut self,
+        self,
         x: &crate::ast::Var,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -543,7 +543,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_while(
-        &mut self,
+        self,
         x: &crate::ast::While,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -561,7 +561,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_break(
-        &mut self,
+        self,
         x: &crate::ast::Break,
         _env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -571,7 +571,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_function(
-        &mut self,
+        self,
         x: &Function,
         state: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
@@ -586,7 +586,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     }
 
     fn visit_return(
-        &mut self,
+        self,
         ret: &crate::ast::Return,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {

@@ -2,6 +2,10 @@ use paste::paste;
 
 use crate::{token::Token, types::Number};
 
+pub trait Walkable<V, T, S> {
+    fn walk(&self, visitor: V, state: S) -> T;
+}
+
 macro_rules! ast_root {
     (pub enum $r:ident { $($n:ident: $t:ident $b:tt),* $(,)? }) => {
         #[derive(Debug, Clone, PartialEq)]
@@ -25,15 +29,17 @@ macro_rules! ast {
 
             pub trait [<$r Visitor>]<T, S> {
                 $(
-                    fn [<visit_ $n:lower>](&mut self, x: &$n, state: S) -> T;
+                    fn [<visit_ $n:lower>](self, [<$r:lower>]: &$n, state: S) -> T;
                 )*
             }
 
-            pub fn [<walk_ $r:lower>]<T, S>(mut visitor: impl [<$r Visitor>]<T, S>, x: &$r, state: S) -> T {
-                match x {
-                    $(
-                        $r::$n(y) => visitor.[<visit_ $n:lower>](y, state)
-                    ),*
+            impl<T, S, V: [<$r Visitor>]<T, S>> Walkable<V, T, S> for $r {
+                fn walk(&self, mut visitor: V, state: S) -> T {
+                    match self {
+                        $(
+                            $r::$n(y) => visitor.[<visit_ $n:lower>](y, state)
+                        ),*
+                    }
                 }
             }
         )*
