@@ -34,7 +34,7 @@ macro_rules! ast {
             }
 
             impl<T, S, V: [<$r Visitor>]<T, S>> Walkable<V, T, S> for $r {
-                fn walk(&self, mut visitor: V, state: S) -> T {
+                fn walk(&self, visitor: V, state: S) -> T {
                     match self {
                         $(
                             $r::$n(y) => visitor.[<visit_ $n:lower>](y, state)

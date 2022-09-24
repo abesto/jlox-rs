@@ -17,7 +17,7 @@ impl From<Option<Rc<RefCell<Value>>>> for Variable {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Debug)]
 pub struct Environment {
     data: HashMap<String, Rc<RefCell<Variable>>>,
     parent: Option<Rc<RefCell<Environment>>>,
@@ -49,28 +49,59 @@ impl Environment {
     }
 
     #[must_use]
-    pub fn assign(&mut self, name: &Token, value: Rc<RefCell<Value>>) -> bool {
-        if self.data.contains_key(&name.lexeme) {
-            self.data.insert(
-                name.lexeme.clone(),
-                Rc::new(RefCell::new(Some(value).into())),
-            );
-            return true;
-        }
-        if let Some(parent) = &self.parent {
-            parent.borrow_mut().assign(name, value)
-        } else {
-            false
+    pub fn assign(
+        &mut self,
+        distance: Option<usize>,
+        name: &Token,
+        value: Rc<RefCell<Value>>,
+    ) -> bool {
+        match (distance, self.parent.as_ref()) {
+            (None, Some(parent)) => parent.borrow_mut().assign(None, name, value),
+            (None, None) | (Some(0), _) => {
+                if self.data.contains_key(&name.lexeme) {
+                    self.data.insert(
+                        name.lexeme.clone(),
+                        Rc::new(RefCell::new(Some(value).into())),
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+            (Some(n), Some(parent)) => parent.borrow_mut().assign(Some(n - 1), name, value),
+            _ => unreachable!(),
         }
     }
 
-    pub fn get(&self, name: &Token) -> Option<Rc<RefCell<Variable>>> {
-        if let Some(var) = self.data.get(&name.lexeme) {
-            return Some(Rc::clone(var));
+    pub fn get(&self, distance: Option<usize>, name: &Token) -> Option<Rc<RefCell<Variable>>> {
+        match (distance, self.parent.as_ref()) {
+            (None, Some(parent)) => parent.borrow().get(None, name),
+            (None, None) | (Some(0), _) => self.data.get(&name.lexeme).map(Rc::clone),
+            (Some(n), Some(parent)) => parent.borrow().get(Some(n - 1), name),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl std::fmt::Display for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "ENV START")?;
+        for (name, var) in self.data.iter() {
+            write!(f, "{}={} ", name, var.borrow())?;
         }
         if let Some(parent) = &self.parent {
-            return parent.borrow().get(name);
+            write!(f, "{}", parent.borrow())?;
         }
-        None
+        writeln!(f, "ENV END")?;
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Variable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Variable::Uninitialized => write!(f, "<uninitialized>"),
+            Variable::Value(v) => write!(f, "{}", v.borrow()),
+        }
     }
 }

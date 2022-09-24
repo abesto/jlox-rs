@@ -8,8 +8,9 @@ use thiserror::Error;
 use crate::environment::Environment;
 use crate::interpreter::{Interpreter, Value};
 use crate::parser::Parser;
+use crate::resolver::Resolver;
 use crate::scanner::Scanner;
-use crate::types::ResolveErrorLocation;
+use crate::types::ErrorLocationResolver;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -18,6 +19,9 @@ pub enum Error {
 
     #[error("{}Parsing failed, see errors above.", .0.iter().map(|e| format!("{}\n", e)).collect::<String>())]
     Parser(Vec<crate::parser::Error>),
+
+    #[error("{}Variable resolution failed, see errors above.", .0.iter().map(|e| format!("{}\n", e)).collect::<String>())]
+    Resolver(Vec<crate::resolver::Error>),
 
     #[error(transparent)]
     Runtime(#[from] crate::interpreter::Error),
@@ -103,28 +107,28 @@ impl Lox {
         source: Vec<u8>,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Value>> {
-        match Scanner::new(&source).scan_tokens() {
-            Err(mut errors) => {
-                for error in errors.iter_mut() {
-                    error.resolve(&source);
-                }
-                Err(Error::Scanner(errors))
-            }
-            Ok(tokens) => match Parser::new(tokens).parse() {
-                Err(mut errors) => {
-                    for error in errors.iter_mut() {
-                        error.resolve(&source);
-                    }
-                    Err(Error::Parser(errors))
-                }
-                Ok(ast) => match interpreter.interpret(&ast, env) {
-                    Ok(value) => Ok(value.map(|v| v.borrow().clone())),
-                    Err(mut e) => {
-                        e.resolve(&source);
-                        Err(Error::Runtime(e))
-                    }
-                },
-            },
-        }
+        let error_location_resolver = ErrorLocationResolver::new(&source);
+
+        let tokens = Scanner::new(&source)
+            .scan_tokens()
+            .map_err(|e| error_location_resolver.resolve(e))
+            .map_err(Error::Scanner)?;
+
+        let program = Parser::new(tokens)
+            .parse()
+            .map_err(|e| error_location_resolver.resolve(e))
+            .map_err(Error::Parser)?;
+
+        let bindings = Resolver::new()
+            .resolve(&program)
+            .map_err(|e| error_location_resolver.resolve(e))
+            .map_err(Error::Resolver)?;
+        interpreter.set_bindings(bindings);
+
+        interpreter
+            .interpret(&program, env)
+            .map_err(|e| error_location_resolver.resolve(e))
+            .map_err(Error::Runtime)
+            .map(|opt| opt.map(|v| v.borrow().clone()))
     }
 }

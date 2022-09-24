@@ -44,6 +44,33 @@ pub trait ResolveErrorLocation {
     fn resolve(&mut self, source: &[u8]);
 }
 
+impl<T: ResolveErrorLocation> ResolveErrorLocation for Vec<T> {
+    fn resolve(&mut self, source: &[u8]) {
+        for e in self {
+            e.resolve(source);
+        }
+    }
+}
+
+pub struct ErrorLocationResolver<'a> {
+    source: &'a [u8],
+}
+
+impl<'a> ErrorLocationResolver<'a> {
+    #[must_use]
+    pub fn new(source: &'a [u8]) -> Self {
+        Self { source }
+    }
+
+    pub fn resolve<E>(&self, mut e: E) -> E
+    where
+        E: ResolveErrorLocation,
+    {
+        e.resolve(self.source);
+        e
+    }
+}
+
 impl std::fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

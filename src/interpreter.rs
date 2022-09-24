@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, collections::HashMap};
 
 use derivative::Derivative;
 use macros::ResolveErrorLocation;
@@ -183,12 +183,18 @@ pub enum Error {
 
 pub type Result<V = Option<Rc<RefCell<Value>>>, E = Error> = std::result::Result<V, E>;
 
-pub struct Interpreter {}
+pub struct Interpreter {
+    bindings: HashMap<SourceLocation, usize>
+}
 
 impl Interpreter {
     #[must_use]
     pub fn new() -> Self {
-        Self {}
+        Self { bindings: Default::default() }
+    }
+
+    pub fn set_bindings(&mut self, bindings: HashMap<SourceLocation, usize>) {
+        self.bindings = bindings;
     }
 
     fn evaluate(
@@ -226,12 +232,10 @@ impl Interpreter {
     }
 
     fn execute_block(&mut self, statements: &[Stmt], env: Rc<RefCell<Environment>>) -> Result {
-        Environment::nested(&env, |block_env| {
-            statements
-                .iter()
-                .map(|stmt| self.execute(stmt, Rc::clone(&block_env)))
-                .try_fold(None, |_, x| x)
-        })
+        statements
+            .iter()
+            .map(|stmt| self.execute(stmt, Rc::clone(&env)))
+            .try_fold(None, |_, x| x)
     }
 }
 
@@ -386,7 +390,9 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         x: &crate::ast::Variable,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
-        match env.borrow().get(&x.name) {
+        let distance = self.bindings.get(&x.name.offset.into()).cloned();
+        let var_opt = env.borrow().get(distance, &x.name);
+        match var_opt {
             Some(var) => match &*var.borrow() {
                 Variable::Value(v) => Ok(Rc::clone(v)),
                 Variable::Uninitialized => Err(Error::UninitializedVariable {
@@ -407,7 +413,8 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
         let value = self.evaluate(&x.value, Rc::clone(&env))?;
-        if !env.borrow_mut().assign(&x.name, Rc::clone(&value)) {
+        let distance = self.bindings.get(&x.name.offset.into()).cloned();
+        if !env.borrow_mut().assign(distance, &x.name, Rc::clone(&value)) {
             Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
                 location: SourceLocation::new(x.name.offset),
@@ -490,7 +497,9 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
         x: &crate::ast::Block,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
-        self.execute_block(&x.statements, env)
+        Environment::nested(&env, |block_env| {
+            self.execute_block(&x.statements, block_env)
+        })
     }
 
     fn visit_expression(

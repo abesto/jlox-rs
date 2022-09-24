@@ -202,10 +202,10 @@ repl_test!(lexical_scope_assign, {
     "inner"
 });
 
-repl_test!(lexical_scope_complex, {
-    > "var x = \"outer\"; { var x = \"inner \" + x; print x; } print x;"
-    "inner outer"
-    "outer"
+repl_test!(self_initializer, {
+    > "var x = \"outer\"; { var x = \"inner \" + x; }"
+    E "Can't read local variable `x` in its own initializer at 0:38"
+    E "Variable resolution failed, see errors above."
 });
 
 repl_test!(interpreter_prints_expression_result, {
@@ -333,4 +333,9 @@ repl_test!(lambda_expr_statement, {
     > "fun () {}"
     E "Expected `;` after anonymous function expression statement at 1:0"
     E "Parsing failed, see errors above."
+});
+
+program_test!(binding, "binding.lox", {
+    "global"
+    "global"
 });

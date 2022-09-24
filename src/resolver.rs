@@ -4,13 +4,13 @@ use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::{
-    ast::{Expr, ExprVisitor, Stmt, StmtVisitor, Walkable},
+    ast::{ExprVisitor, Stmt, StmtVisitor, Walkable},
     token::Token,
     types::SourceLocation,
 };
 
 #[derive(Error, Debug, ResolveErrorLocation)]
-enum Error {
+pub enum Error {
     #[error("Can't read local variable `{name}` in its own initializer at {location}")]
     SelfReferencingInitializer {
         name: String,
@@ -40,7 +40,7 @@ pub struct Resolver {
 
 impl Resolver {
     #[must_use]
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
@@ -52,32 +52,49 @@ impl Resolver {
         self.scopes.pop();
     }
 
+    pub fn resolve(&mut self, statements: &[Stmt]) -> Result<State> {
+        let mut state = State::new();
+        self.resolve_statements(statements, &mut state)?;
+        Ok(state)
+    }
+
     fn resolve_statements(&mut self, statements: &[Stmt], state: &mut State) -> Result {
         statements
             .iter()
             .map(|s| s.walk(&mut *self, state))
             .reduce(combine_results)
-            .unwrap()
+            .unwrap_or(Ok(()))
     }
 
     fn resolve_local(&mut self, name: &Token, state: &mut State) {
-        for (i, scope) in self.scopes.iter().rev().enumerate() {
+        for (i, scope) in self.scopes.iter().enumerate().rev() {
             if scope.contains_key(&name.lexeme) {
                 state.insert(name.offset.into(), self.scopes.len() - 1 - i);
             }
         }
     }
 
-    fn declare(&mut self, name: Token) {
+    fn declare(&mut self, name: &Token) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.lexeme, false);
+            scope.insert(name.lexeme.clone(), false);
         }
     }
 
-    fn define(&mut self, name: Token) {
+    fn define(&mut self, name: &Token) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.lexeme, true);
+            scope.insert(name.lexeme.clone(), true);
         }
+    }
+
+    fn resolve_function(&mut self, params: &[Token], body: &[Stmt], state: &mut State) -> Result {
+        self.begin_scope();
+        for param in params {
+            self.declare(param);
+            self.define(param);
+        }
+        let r = self.resolve_statements(body, state);
+        self.end_scope();
+        r
     }
 }
 
@@ -102,36 +119,52 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
         r
     }
 
-    fn visit_literal(self, expr: &crate::ast::Literal, state: &mut State) -> Result {
-        todo!()
+    fn visit_literal(self, _expr: &crate::ast::Literal, _state: &mut State) -> Result {
+        Ok(())
     }
 
     fn visit_unary(self, expr: &crate::ast::Unary, state: &mut State) -> Result {
-        todo!()
+        expr.right.walk(self, state)
     }
 
     fn visit_binary(self, expr: &crate::ast::Binary, state: &mut State) -> Result {
-        todo!()
+        combine_results(
+            expr.left.walk(&mut *self, state),
+            expr.right.walk(self, state),
+        )
     }
 
     fn visit_call(self, expr: &crate::ast::Call, state: &mut State) -> Result {
-        todo!()
+        let callee_result = expr.callee.walk(&mut *self, state);
+        expr.arguments
+            .iter()
+            .map(|arg| arg.walk(&mut *self, state))
+            .fold(callee_result, combine_results)
     }
 
     fn visit_logical(self, expr: &crate::ast::Logical, state: &mut State) -> Result {
-        todo!()
+        combine_results(
+            expr.left.walk(&mut *self, state),
+            expr.right.walk(self, state),
+        )
     }
 
     fn visit_lambda(self, expr: &crate::ast::Lambda, state: &mut State) -> Result {
-        todo!()
+        self.resolve_function(&expr.params, &expr.body, state)
     }
 
     fn visit_ternary(self, expr: &crate::ast::Ternary, state: &mut State) -> Result {
-        todo!()
+        combine_results(
+            expr.left.walk(&mut *self, state),
+            combine_results(
+                expr.mid.walk(&mut *self, state),
+                expr.right.walk(&mut *self, state),
+            ),
+        )
     }
 
     fn visit_grouping(self, expr: &crate::ast::Grouping, state: &mut State) -> Result {
-        todo!()
+        expr.expr.walk(self, state)
     }
 }
 
@@ -144,34 +177,58 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_expression(self, stmt: &crate::ast::Expression, state: &mut State) -> Result {
-        todo!()
+        stmt.expr.walk(self, state)
     }
 
     fn visit_function(self, stmt: &crate::ast::Function, state: &mut State) -> Result {
-        todo!()
+        self.declare(&stmt.name);
+        self.define(&stmt.name);
+        self.resolve_function(&stmt.params, &stmt.body, state)
     }
 
     fn visit_if(self, stmt: &crate::ast::If, state: &mut State) -> Result {
-        todo!()
+        let result = combine_results(
+            stmt.condition.walk(&mut *self, state),
+            stmt.then_branch.walk(&mut *self, state),
+        );
+        if let Some(else_branch) = &stmt.else_branch {
+            combine_results(result, else_branch.walk(self, state))
+        } else {
+            result
+        }
     }
 
     fn visit_print(self, stmt: &crate::ast::Print, state: &mut State) -> Result {
-        todo!()
+        stmt.expr.walk(self, state)
     }
 
     fn visit_return(self, stmt: &crate::ast::Return, state: &mut State) -> Result {
-        todo!()
+        if let Some(expr) = &stmt.value {
+            expr.walk(self, state)
+        } else {
+            Ok(())
+        }
     }
 
     fn visit_var(self, stmt: &crate::ast::Var, state: &mut State) -> Result {
-        todo!()
+        self.declare(&stmt.name);
+        let r = if let Some(initializer) = &stmt.initializer {
+            initializer.walk(&mut *self, state)
+        } else {
+            Ok(())
+        };
+        self.define(&stmt.name);
+        r
     }
 
     fn visit_while(self, stmt: &crate::ast::While, state: &mut State) -> Result {
-        todo!()
+        combine_results(
+            stmt.condition.walk(&mut *self, state),
+            stmt.statement.walk(self, state),
+        )
     }
 
-    fn visit_break(self, stmt: &crate::ast::Break, state: &mut State) -> Result {
-        todo!()
+    fn visit_break(self, _stmt: &crate::ast::Break, _state: &mut State) -> Result {
+        Ok(())
     }
 }
