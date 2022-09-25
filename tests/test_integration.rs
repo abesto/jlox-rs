@@ -313,6 +313,7 @@ program_test!(fibonacci, "fib.lox", {
 repl_test!(return_outside_function, {
     > "return 3;"
     E "`return` outside function at 0:0"
+    E "Variable resolution failed, see errors above."
 });
 
 program_test!(counter_closure, "counter.lox", {

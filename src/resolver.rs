@@ -22,6 +22,9 @@ pub enum Error {
         name: String,
         location: SourceLocation,
     },
+
+    #[error("`return` outside function at {location}")]
+    ReturnOutsideFunction { location: SourceLocation },
 }
 
 type Output = ();
@@ -41,9 +44,25 @@ fn combine_results(l: Result, r: Result) -> Result {
     }
 }
 
+/// Are we inside a function-like thing?
+/// Used to detect `return`s outside functions.
+#[derive(Debug, PartialEq, Eq)]
+enum FunctionType {
+    None,
+    Function,
+    Lambda,
+}
+
+impl Default for FunctionType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 #[derive(Default)]
 pub struct Resolver {
     scopes: Vec<HashMap<String, bool>>,
+    current_function: FunctionType,
 }
 
 impl Resolver {
@@ -101,15 +120,26 @@ impl Resolver {
         }
     }
 
-    fn resolve_function(&mut self, params: &[Token], body: &[Stmt], state: &mut State) -> Result {
+    fn resolve_function(
+        &mut self,
+        params: &[Token],
+        body: &[Stmt],
+        function_type: FunctionType,
+        state: &mut State,
+    ) -> Result {
+        let enclosing_function = std::mem::replace(&mut self.current_function, function_type);
         self.begin_scope();
+
         let mut result = Ok(());
         for param in params {
             result = combine_results(result, self.declare(param));
             self.define(param);
         }
         result = combine_results(result, self.resolve_statements(body, state));
+
         self.end_scope();
+        self.current_function = enclosing_function;
+
         result
     }
 }
@@ -166,7 +196,7 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_lambda(self, expr: &crate::ast::Lambda, state: &mut State) -> Result {
-        self.resolve_function(&expr.params, &expr.body, state)
+        self.resolve_function(&expr.params, &expr.body, FunctionType::Lambda, state)
     }
 
     fn visit_ternary(self, expr: &crate::ast::Ternary, state: &mut State) -> Result {
@@ -201,7 +231,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
         self.define(&stmt.name);
         combine_results(
             result,
-            self.resolve_function(&stmt.params, &stmt.body, state),
+            self.resolve_function(&stmt.params, &stmt.body, FunctionType::Function, state),
         )
     }
 
@@ -222,6 +252,11 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_return(self, stmt: &crate::ast::Return, state: &mut State) -> Result {
+        if self.current_function == FunctionType::None {
+            return Err(vec![Error::ReturnOutsideFunction {
+                location: stmt.keyword.location,
+            }]);
+        }
         if let Some(expr) = &stmt.value {
             expr.walk(self, state)
         } else {
