@@ -16,6 +16,12 @@ pub enum Error {
         name: String,
         location: SourceLocation,
     },
+
+    #[error("Variable `{name}` already exists in scope. This `var` statement: {location}")]
+    DoubleDeclaration {
+        name: String,
+        location: SourceLocation,
+    },
 }
 
 type Output = ();
@@ -76,10 +82,17 @@ impl Resolver {
         }
     }
 
-    fn declare(&mut self, name: &Token) {
+    fn declare(&mut self, name: &Token) -> Result {
         if let Some(scope) = self.scopes.last_mut() {
+            if scope.contains_key(&name.lexeme) {
+                return Err(vec![Error::DoubleDeclaration {
+                    name: name.lexeme.clone(),
+                    location: name.location,
+                }]);
+            }
             scope.insert(name.lexeme.clone(), false);
         }
+        Ok(())
     }
 
     fn define(&mut self, name: &Token) {
@@ -90,13 +103,14 @@ impl Resolver {
 
     fn resolve_function(&mut self, params: &[Token], body: &[Stmt], state: &mut State) -> Result {
         self.begin_scope();
+        let mut result = Ok(());
         for param in params {
-            self.declare(param);
+            result = combine_results(result, self.declare(param));
             self.define(param);
         }
-        let r = self.resolve_statements(body, state);
+        result = combine_results(result, self.resolve_statements(body, state));
         self.end_scope();
-        r
+        result
     }
 }
 
@@ -183,9 +197,12 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_function(self, stmt: &crate::ast::Function, state: &mut State) -> Result {
-        self.declare(&stmt.name);
+        let result = self.declare(&stmt.name);
         self.define(&stmt.name);
-        self.resolve_function(&stmt.params, &stmt.body, state)
+        combine_results(
+            result,
+            self.resolve_function(&stmt.params, &stmt.body, state),
+        )
     }
 
     fn visit_if(self, stmt: &crate::ast::If, state: &mut State) -> Result {
@@ -213,12 +230,14 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_var(self, stmt: &crate::ast::Var, state: &mut State) -> Result {
-        self.declare(&stmt.name);
-        let r = if let Some(initializer) = &stmt.initializer {
-            initializer.walk(&mut *self, state)
-        } else {
-            Ok(())
-        };
+        let r = combine_results(
+            self.declare(&stmt.name),
+            if let Some(initializer) = &stmt.initializer {
+                initializer.walk(&mut *self, state)
+            } else {
+                Ok(())
+            },
+        );
         self.define(&stmt.name);
         r
     }

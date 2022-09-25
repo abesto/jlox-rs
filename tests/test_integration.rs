@@ -345,3 +345,22 @@ repl_test!(repl_binding, {
     > "print f();"
     "1"
 });
+
+repl_test!(double_declare_global, {
+    > "var x = 1;"
+    > "var x = 2;"
+    > "print x;"
+    "2"
+});
+
+repl_test!(double_declare_local, {
+    > "fun bad() { var x = 1; var x = 2; }"
+    E "Variable `x` already exists in scope. This `var` statement: 0:27"
+    E "Variable resolution failed, see errors above."
+});
+
+repl_test!(local_shadow, {
+    > "fun o() { var x = 1; fun i() { var x = 2; } return x; }"
+    > "print o();"
+    "1"
+});
