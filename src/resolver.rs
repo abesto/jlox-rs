@@ -19,7 +19,9 @@ pub enum Error {
 }
 
 type Output = ();
-type State = HashMap<SourceLocation, usize>;
+pub type CommandIndex = usize;
+pub type Bindings = HashMap<SourceLocation, usize>;
+type State = Bindings;
 type Result<T = Output, E = Vec<Error>> = std::result::Result<T, E>;
 
 /// Concatenate list of errors if there are any, otherwise return the latest value
@@ -52,7 +54,7 @@ impl Resolver {
         self.scopes.pop();
     }
 
-    pub fn resolve(&mut self, statements: &[Stmt]) -> Result<State> {
+    pub fn resolve(&mut self, statements: &[Stmt]) -> Result<Bindings> {
         let mut state = State::new();
         self.resolve_statements(statements, &mut state)?;
         Ok(state)
@@ -69,7 +71,7 @@ impl Resolver {
     fn resolve_local(&mut self, name: &Token, state: &mut State) {
         for (i, scope) in self.scopes.iter().enumerate().rev() {
             if scope.contains_key(&name.lexeme) {
-                state.insert(name.offset.into(), self.scopes.len() - 1 - i);
+                state.insert(name.location, self.scopes.len() - 1 - i);
             }
         }
     }
@@ -104,7 +106,7 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
             if scope.get(&expr.name.lexeme) == Some(&false) {
                 return Err(vec![Error::SelfReferencingInitializer {
                     name: expr.name.lexeme.clone(),
-                    location: expr.name.offset.into(),
+                    location: expr.name.location,
                 }]);
             }
         }

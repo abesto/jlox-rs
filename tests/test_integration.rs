@@ -339,3 +339,9 @@ program_test!(binding, "binding.lox", {
     "global"
     "global"
 });
+
+repl_test!(repl_binding, {
+    > "fun f() { var x = 1; return x; }"
+    > "print f();"
+    "1"
+});

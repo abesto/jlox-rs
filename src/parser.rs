@@ -4,7 +4,6 @@ use thiserror::Error;
 use crate::ast::*;
 use crate::token::Token;
 use crate::token::TokenValue as TV;
-use crate::types::SourceIndex;
 use crate::types::SourceLocation;
 
 #[derive(Error, Debug, ResolveErrorLocation)]
@@ -166,7 +165,7 @@ impl Parser {
         } else {
             Err(Error::Bad {
                 msg: msg.to_string(),
-                location: self.peek().offset.into(),
+                location: self.peek().location,
             })
         }
     }
@@ -224,20 +223,18 @@ impl Parser {
             .clone();
         self.consume(&TV::LeftParen, format!("Expected `(` after {} name", kind))?;
 
-        let params = self.parameters(name.offset)?;
+        let params = self.parameters(name.location)?;
         let body = self.body(kind)?;
 
         Ok(Stmt::Function(Function { name, params, body }))
     }
 
-    fn parameters(&mut self, offset: SourceIndex) -> Result<Vec<Token>> {
+    fn parameters(&mut self, location: SourceLocation) -> Result<Vec<Token>> {
         let mut params = vec![];
         if !self.check(&TV::RightParen) {
             loop {
                 if params.len() >= 255 {
-                    return Err(Error::TooManyArguments {
-                        location: offset.into(),
-                    });
+                    return Err(Error::TooManyArguments { location });
                 }
                 params.push(
                     self.consume(
@@ -420,7 +417,7 @@ impl Parser {
     fn break_statement(&mut self) -> Result<Stmt> {
         if self.loop_depth == 0 {
             Err(Error::BreakOutsideLoop {
-                location: self.current.into(),
+                location: SourceLocation::new(self.previous().location.command(), self.current),
             })
         } else {
             self.consume(&TV::Semicolon, "Expected `;` after `break`")?;
@@ -449,7 +446,7 @@ impl Parser {
         if self.match_(operators) {
             self.errors.push(Error::MissingLhs {
                 operator: self.previous().lexeme.clone(),
-                location: self.previous().offset.into(),
+                location: self.previous().location,
             });
             // Skip RHS
             operand(self)?;
@@ -502,7 +499,7 @@ impl Parser {
             } else {
                 Err(Error::InvalidAssignmentTarget {
                     target: expr,
-                    location: start.into(),
+                    location: SourceLocation::new(self.previous().location.command(), start),
                 })
             }
         } else {
@@ -513,7 +510,8 @@ impl Parser {
     fn lambda(&mut self) -> Result<Expr> {
         let token = self.previous().clone();
         self.consume(&TV::LeftParen, "Expected `(` after anonymous `fun`")?;
-        let params = self.parameters(self.current)?;
+        let params =
+            self.parameters(SourceLocation::new(token.location.command(), self.current))?;
         let body = self.body("lambda")?;
         Ok(Expr::Lambda(Lambda {
             token,
@@ -637,7 +635,7 @@ impl Parser {
             loop {
                 if arguments.len() >= 255 {
                     return Err(Error::TooManyArguments {
-                        location: start.into(),
+                        location: SourceLocation::new(self.previous().location.command(), start),
                     });
                 }
                 arguments.push(self.assignment()?);
@@ -674,7 +672,7 @@ impl Parser {
             })),
             t => Err(Error::Bad {
                 msg: format!("Expected expression, found: `{}`", t),
-                location: self.previous().offset.into(),
+                location: self.previous().location,
             }),
         }
     }
@@ -713,7 +711,7 @@ mod test {
     use crate::types::ResolveErrorLocation;
 
     fn expr_parses_to(input: &str, expected: &str) {
-        let tokens = Scanner::new(format!("{};", input).as_bytes())
+        let tokens = Scanner::new(format!("{};", input).as_bytes(), 0)
             .scan_tokens()
             .unwrap();
         let statements = Parser::new(tokens).parse().unwrap();
@@ -761,7 +759,7 @@ mod test {
     #[test]
     fn test_missing_lhs() {
         let input = "+ 3;";
-        let tokens = Scanner::new(input.as_bytes()).scan_tokens().unwrap();
+        let tokens = Scanner::new(input.as_bytes(), 0).scan_tokens().unwrap();
         let mut errors = Parser::new(tokens).parse().err().unwrap();
         assert_eq!(
             vec![

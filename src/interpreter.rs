@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, collections::HashMap};
+use std::{cell::RefCell, rc::Rc};
 
 use derivative::Derivative;
 use macros::ResolveErrorLocation;
@@ -8,7 +8,7 @@ use crate::{
     ast::{Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor, Walkable},
     environment::{Environment, Variable},
     token::{Token, TokenValue},
-    types::{Number, SourceLocation},
+    types::{Number, SourceLocation}, resolver::{Bindings, CommandIndex},
 };
 
 #[derive(Derivative)]
@@ -183,18 +183,20 @@ pub enum Error {
 
 pub type Result<V = Option<Rc<RefCell<Value>>>, E = Error> = std::result::Result<V, E>;
 
+#[derive(Default)]
 pub struct Interpreter {
-    bindings: HashMap<SourceLocation, usize>
+    pub command: CommandIndex,
+    bindings: Bindings,
 }
 
 impl Interpreter {
     #[must_use]
     pub fn new() -> Self {
-        Self { bindings: Default::default() }
+        Self { ..Default::default() }
     }
 
-    pub fn set_bindings(&mut self, bindings: HashMap<SourceLocation, usize>) {
-        self.bindings = bindings;
+    pub fn update_bindings(&mut self, bindings: Bindings) {
+        self.bindings.extend(bindings.into_iter());
     }
 
     fn evaluate(
@@ -227,7 +229,7 @@ impl Interpreter {
             operator: op.value.clone(),
             expected: Vec::from_iter(expected.iter().map(ToString::to_string)),
             actual,
-            location: SourceLocation::new(op.offset),
+            location: op.location,
         })
     }
 
@@ -295,7 +297,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
 
             TokenValue::Slash => match (left, right) {
                 (Value::Number(_), Value::Number(r)) if *r == 0.0 => Err(Error::DivisionByZero {
-                    location: SourceLocation::new(op.offset),
+                    location: op.location,
                 }),
                 (Value::Number(l), Value::Number(r)) => {
                     Ok(Rc::new(RefCell::new(Value::Number(l / r))))
@@ -360,7 +362,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
             TokenValue::EqualEqual => Ok(Rc::new(RefCell::new(Value::Boolean(left == right)))),
             TokenValue::BangEqual => Ok(Rc::new(RefCell::new(Value::Boolean(left != right)))),
 
-            x => unreachable!("Unrecognized binary operator `{}` at {}", x, op.offset),
+            x => unreachable!("Unrecognized binary operator `{}` at {}", x, op.location),
         }
     }
 
@@ -390,19 +392,19 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         x: &crate::ast::Variable,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
-        let distance = self.bindings.get(&x.name.offset.into()).cloned();
+        let distance = self.bindings.get(&x.name.location).cloned();
         let var_opt = env.borrow().get(distance, &x.name);
         match var_opt {
             Some(var) => match &*var.borrow() {
                 Variable::Value(v) => Ok(Rc::clone(v)),
                 Variable::Uninitialized => Err(Error::UninitializedVariable {
                     name: x.name.lexeme.clone(),
-                    location: SourceLocation::new(x.name.offset),
+                    location: x.name.location,
                 }),
             },
             None => Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
-                location: SourceLocation::new(x.name.offset),
+                location: x.name.location,
             }),
         }
     }
@@ -413,11 +415,11 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>> {
         let value = self.evaluate(&x.value, Rc::clone(&env))?;
-        let distance = self.bindings.get(&x.name.offset.into()).cloned();
+        let distance = self.bindings.get(&x.name.location).cloned();
         if !env.borrow_mut().assign(distance, &x.name, Rc::clone(&value)) {
             Err(Error::UndefinedVariable {
                 name: x.name.lexeme.clone(),
-                location: SourceLocation::new(x.name.offset),
+                location: x.name.location,
             })
         } else {
             Ok(value)
@@ -453,7 +455,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
             | f @ Value::Function { .. } => Ok(f),
             what => Err(Error::NotCallable {
                 what: what.clone(),
-                location: call.closing_paren.offset.into(),
+                location: call.closing_paren.location,
             }),
         }?;
 
@@ -467,7 +469,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
             return Err(Error::WrongArity {
                 expected: callee.arity(),
                 actual: arguments.len(),
-                location: call.closing_paren.offset.into(),
+                location: call.closing_paren.location,
             });
         }
 
@@ -575,7 +577,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
         _env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         Err(Error::Break {
-            location: SourceLocation::new(x.token.offset),
+            location: x.token.location,
         })
     }
 
@@ -606,7 +608,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
         };
 
         Err(Error::Return {
-            location: ret.keyword.offset.into(),
+            location: ret.keyword.location,
             value,
         })
     }

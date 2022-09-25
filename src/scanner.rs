@@ -1,6 +1,7 @@
 use macros::ResolveErrorLocation;
 use thiserror::Error;
 
+use crate::resolver::CommandIndex;
 use crate::token::Token;
 use crate::token::TokenValue;
 use crate::types::Number;
@@ -26,12 +27,14 @@ pub struct Scanner<'a> {
     source: &'a [u8],
     start: SourceIndex,
     current: SourceIndex,
+    command: CommandIndex,
 }
 
 impl<'a> Scanner<'a> {
-    pub fn new(source: &'a [u8]) -> Self {
+    pub fn new(source: &'a [u8], command: CommandIndex) -> Self {
         Scanner {
             source,
+            command,
             start: 0,
             current: 0,
         }
@@ -55,7 +58,7 @@ impl<'a> Scanner<'a> {
         tokens.push(Token {
             value: TokenValue::Eof,
             lexeme: String::new(),
-            offset: self.current,
+            location: SourceLocation::new(self.command, self.current),
         });
 
         if errors.is_empty() {
@@ -101,7 +104,10 @@ impl<'a> Scanner<'a> {
     fn substring(&self, start: SourceIndex, end: SourceIndex) -> Result<String, Error> {
         String::from_utf8(self.source[start..end].to_vec()).map_err(|source| {
             Error::InvalidUtf8Char {
-                location: SourceLocation::new(start + source.utf8_error().valid_up_to()),
+                location: SourceLocation::new(
+                    self.command,
+                    start + source.utf8_error().valid_up_to(),
+                ),
             }
         })
     }
@@ -110,7 +116,7 @@ impl<'a> Scanner<'a> {
         Ok(Token {
             value,
             lexeme: self.substring(self.start, self.current)?,
-            offset: self.start,
+            location: SourceLocation::new(self.command, self.start),
         })
     }
 
@@ -121,7 +127,7 @@ impl<'a> Scanner<'a> {
 
         if self.is_at_end() {
             return Err(Error::UnterminatedString {
-                location: SourceLocation::new(self.start),
+                location: SourceLocation::new(self.command, self.start),
             });
         }
 
@@ -213,7 +219,7 @@ impl<'a> Scanner<'a> {
                     }
                     if self.is_at_end() {
                         Err(Error::UnterminatedComment {
-                            location: SourceLocation::new(self.start),
+                            location: SourceLocation::new(self.command, self.start),
                         })
                     } else {
                         self.advance();
@@ -254,7 +260,7 @@ impl<'a> Scanner<'a> {
 
             c => Err(Error::UnexpectedCharacter {
                 c: c.into(),
-                location: SourceLocation::new(self.current),
+                location: SourceLocation::new(self.command, self.current),
             }),
         }
     }
@@ -267,7 +273,7 @@ mod test {
     #[test]
     fn test_tokens() {
         let source = b"(){},.-+;*!23!=42.42/* block \n comment */==<<==>/>=\"foo \nbar\"// this is a comment now".to_vec();
-        let mut scanner = super::Scanner::new(&source);
+        let mut scanner = super::Scanner::new(&source, 0);
         let tokens = scanner.scan_tokens().unwrap();
 
         for (i, v) in [
@@ -305,7 +311,7 @@ mod test {
 
     #[test]
     fn test_unexpected_character() {
-        let errs = super::Scanner::new(b"^").scan_tokens().err().unwrap();
+        let errs = super::Scanner::new(b"^", 0).scan_tokens().err().unwrap();
         assert_eq!(errs.len(), 1);
     }
 

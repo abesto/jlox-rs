@@ -1,4 +1,4 @@
-use crate::types::{Number, SourceIndex};
+use crate::types::{Number, SourceLocation};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenValue {
@@ -58,7 +58,7 @@ pub enum TokenValue {
 pub struct Token {
     pub value: TokenValue,
     pub lexeme: String,
-    pub offset: SourceIndex,
+    pub location: SourceLocation,
 }
 
 impl std::fmt::Display for TokenValue {

@@ -1,10 +1,16 @@
+use crate::resolver::CommandIndex;
+
 pub type SourceIndex = usize;
 pub type Number = f64;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SourceLocation {
-    Offset(SourceIndex),
+    Offset {
+        command: CommandIndex,
+        offset: SourceIndex,
+    },
     Resolved {
+        command: CommandIndex,
         line: SourceIndex,
         character: SourceIndex,
     },
@@ -12,12 +18,12 @@ pub enum SourceLocation {
 
 impl SourceLocation {
     #[must_use]
-    pub fn new(offset: SourceIndex) -> Self {
-        Self::Offset(offset)
+    pub fn new(command: CommandIndex, offset: SourceIndex) -> Self {
+        Self::Offset { command, offset }
     }
 
     pub fn resolve(&mut self, source: &[u8]) {
-        if let Self::Offset(offset) = self {
+        if let Self::Offset { command, offset } = self {
             let mut character = 0;
             let mut line = 0;
 
@@ -30,16 +36,21 @@ impl SourceLocation {
                 }
             }
 
-            *self = Self::Resolved { character, line };
+            *self = Self::Resolved {
+                command: *command,
+                character,
+                line,
+            };
+        }
+    }
+
+    pub fn command(&self) -> CommandIndex {
+        match self {
+            Self::Offset { command, .. } | Self::Resolved { command, .. } => *command,
         }
     }
 }
 
-impl From<SourceIndex> for SourceLocation {
-    fn from(index: SourceIndex) -> Self {
-        Self::Offset(index)
-    }
-}
 pub trait ResolveErrorLocation {
     fn resolve(&mut self, source: &[u8]);
 }
@@ -74,8 +85,10 @@ impl<'a> ErrorLocationResolver<'a> {
 impl std::fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Resolved { line, character } => write!(f, "{}:{}", line, character),
-            Self::Offset(offset) => write!(f, "byte {}", offset),
+            Self::Resolved {
+                line, character, ..
+            } => write!(f, "{}:{}", line, character),
+            Self::Offset { offset, .. } => write!(f, "byte {}", offset),
         }
     }
 }

@@ -23,8 +23,9 @@ pub enum Error {
     #[error("{}Variable resolution failed, see errors above.", .0.iter().map(|e| format!("{}\n", e)).collect::<String>())]
     Resolver(Vec<crate::resolver::Error>),
 
+    // Box because Clippy says the sizes of variants is otherwise large
     #[error(transparent)]
-    Runtime(#[from] crate::interpreter::Error),
+    Runtime(#[from] Box<crate::interpreter::Error>),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -94,6 +95,7 @@ impl Lox {
                     Ok(Some(v)) => println!("{}", v),
                     Ok(None) => (),
                 }
+                interpreter.command += 1;
             } else {
                 break;
             }
@@ -109,7 +111,7 @@ impl Lox {
     ) -> Result<Option<Value>> {
         let error_location_resolver = ErrorLocationResolver::new(&source);
 
-        let tokens = Scanner::new(&source)
+        let tokens = Scanner::new(&source, interpreter.command)
             .scan_tokens()
             .map_err(|e| error_location_resolver.resolve(e))
             .map_err(Error::Scanner)?;
@@ -123,12 +125,12 @@ impl Lox {
             .resolve(&program)
             .map_err(|e| error_location_resolver.resolve(e))
             .map_err(Error::Resolver)?;
-        interpreter.set_bindings(bindings);
+        interpreter.update_bindings(bindings);
 
         interpreter
             .interpret(&program, env)
             .map_err(|e| error_location_resolver.resolve(e))
-            .map_err(Error::Runtime)
+            .map_err(|e| Error::Runtime(Box::new(e)))
             .map(|opt| opt.map(|v| v.borrow().clone()))
     }
 }
