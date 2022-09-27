@@ -132,14 +132,14 @@ macro_rules! repl_test {
 }
 
 macro_rules! program_test {
-    ($n:ident, $f:literal, {
+    ($n:ident, {
         $(
             $($p:ident)? $o:literal
         )*
     }) => { paste! {
             #[test]
-            fn [<test_ $n>]() {
-                let mut lox = Lox::script(&[concat!("tests/programs/", $f)]);
+            fn [<test_ $n:snake>]() {
+                let mut lox = Lox::script(&[concat!("tests/programs/", stringify!($n), ".lox")]);
 
                 let mut child = std::mem::take(&mut lox.child).unwrap();
                 if let Some(stdin) = std::mem::take(&mut lox.stdin) {
@@ -301,11 +301,9 @@ repl_test!(wrong_arity_user_function, {
     E "Expected 1 arguments but got 2 at 0:6"
 });
 
-program_test!(define_call_function, "sayHi.lox", {
-    "Hi, Valued Customer!"
-});
+program_test!(sayHi, { "Hi, Valued Customer!" });
 
-program_test!(fibonacci, "fib.lox", {
+program_test!(fib, {
     "2584"
     "4181"
 });
@@ -316,12 +314,12 @@ repl_test!(return_outside_function, {
     E "Variable resolution failed, see errors above."
 });
 
-program_test!(counter_closure, "counter.lox", {
+program_test!(counter, {
     "1"
     "2"
 });
 
-program_test!(lambda, "lambda.lox", {
+program_test!(lambda, {
     "1"
     "2"
     "3"
@@ -336,9 +334,10 @@ repl_test!(lambda_expr_statement, {
     E "Parsing failed, see errors above."
 });
 
-program_test!(binding, "binding.lox", {
+program_test!(binding, {
     "global"
     "global"
+    "block"
 });
 
 repl_test!(repl_binding, {
@@ -364,4 +363,10 @@ repl_test!(local_shadow, {
     > "fun o() { var x = 1; fun i() { var x = 2; } return x; }"
     > "print o();"
     "1"
+});
+
+program_test!(unused_local, {
+    "foo"
+    E "Unused local variable `x`, declared at 1:8"
+    E "Variable resolution failed, see errors above."
 });

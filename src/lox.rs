@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::environment::Environment;
 use crate::interpreter::{Interpreter, Value};
 use crate::parser::Parser;
-use crate::resolver::Resolver;
+use crate::resolver::{Resolver, ResolverConfig};
 use crate::scanner::Scanner;
 use crate::types::ErrorLocationResolver;
 
@@ -74,6 +74,9 @@ impl Lox {
         let contents = std::fs::read(path)?;
         self.run(
             &mut Interpreter::new(),
+            ResolverConfig {
+                error_on_unused_locals: true,
+            },
             contents,
             Self::prepare_global_env(),
         )?;
@@ -88,7 +91,14 @@ impl Lox {
             std::io::stdout().flush()?;
             let mut line = String::new();
             if std::io::stdin().read_line(&mut line)? > 0 {
-                match self.run(&mut interpreter, line.into_bytes(), Rc::clone(&environment)) {
+                match self.run(
+                    &mut interpreter,
+                    ResolverConfig {
+                        error_on_unused_locals: false,
+                    },
+                    line.into_bytes(),
+                    Rc::clone(&environment),
+                ) {
                     Err(e) => {
                         eprintln!("{}", e);
                     }
@@ -106,6 +116,7 @@ impl Lox {
     fn run(
         &mut self,
         interpreter: &mut Interpreter,
+        resolver_config: ResolverConfig,
         source: Vec<u8>,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Value>> {
@@ -121,7 +132,7 @@ impl Lox {
             .map_err(|e| error_location_resolver.resolve(e))
             .map_err(Error::Parser)?;
 
-        let bindings = Resolver::new()
+        let bindings = Resolver::new(resolver_config)
             .resolve(&program)
             .map_err(|e| error_location_resolver.resolve(e))
             .map_err(Error::Resolver)?;

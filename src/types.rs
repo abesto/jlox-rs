@@ -3,7 +3,7 @@ use crate::resolver::CommandIndex;
 pub type SourceIndex = usize;
 pub type Number = f64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SourceLocation {
     Offset {
         command: CommandIndex,
