@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
-use crate::environment::Environment;
+use crate::environment::GlobalEnvironment;
 use crate::interpreter::{Interpreter, Value};
 use crate::parser::Parser;
 use crate::resolver::{Resolver, ResolverConfig};
@@ -40,14 +40,14 @@ impl Lox {
         Self {}
     }
 
-    fn prepare_global_env() -> Rc<RefCell<Environment>> {
-        let mut env = Environment::root();
+    fn prepare_global_env() -> Rc<RefCell<GlobalEnvironment>> {
+        let mut env = GlobalEnvironment::new();
         env.define(
             "clock",
             Some(Rc::new(RefCell::new(Value::NativeFunction {
                 name: "clock".to_string(),
                 arity: 0,
-                fun: |_, _, _| {
+                fun: |_, _| {
                     Value::Number(
                         SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -63,7 +63,7 @@ impl Lox {
             Some(Rc::new(RefCell::new(Value::NativeFunction {
                 name: "type".to_string(),
                 arity: 1,
-                fun: |_, _, args| Value::String(args[0].borrow().type_of()),
+                fun: |_, args| Value::String(args[0].borrow().type_of()),
             }))),
         );
 
@@ -73,19 +73,17 @@ impl Lox {
     pub fn run_file(&mut self, path: &str) -> Result {
         let contents = std::fs::read(path)?;
         self.run(
-            &mut Interpreter::new(),
+            &mut Interpreter::new(Self::prepare_global_env()),
             ResolverConfig {
                 error_on_unused_locals: true,
             },
             contents,
-            Self::prepare_global_env(),
         )?;
         Ok(())
     }
 
     pub fn run_prompt(&mut self) -> Result<()> {
-        let mut interpreter = Interpreter::new();
-        let environment = Self::prepare_global_env();
+        let mut interpreter = Interpreter::new(Self::prepare_global_env());
         loop {
             print!("> ");
             std::io::stdout().flush()?;
@@ -97,7 +95,6 @@ impl Lox {
                         error_on_unused_locals: false,
                     },
                     line.into_bytes(),
-                    Rc::clone(&environment),
                 ) {
                     Err(e) => {
                         eprintln!("{}", e);
@@ -118,7 +115,6 @@ impl Lox {
         interpreter: &mut Interpreter,
         resolver_config: ResolverConfig,
         source: Vec<u8>,
-        env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Value>> {
         let error_location_resolver = ErrorLocationResolver::new(&source);
 
@@ -139,7 +135,7 @@ impl Lox {
         interpreter.update_bindings(bindings);
 
         interpreter
-            .interpret(&program, env)
+            .interpret(&program)
             .map_err(|e| error_location_resolver.resolve(e))
             .map_err(|e| Error::Runtime(Box::new(e)))
             .map(|opt| opt.map(|v| v.borrow().clone()))

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{interpreter::Value, token::Token};
+use crate::{interpreter::Value, resolver::Binding, token::Token};
 
 #[derive(Debug, PartialEq)]
 pub enum Variable {
@@ -17,91 +17,93 @@ impl From<Option<Rc<RefCell<Value>>>> for Variable {
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub struct Environment {
-    data: HashMap<String, Rc<RefCell<Variable>>>,
-    parent: Option<Rc<RefCell<Environment>>>,
-}
-
-impl Environment {
-    #[must_use]
-    pub fn root() -> Self {
-        Self {
-            data: HashMap::new(),
-            parent: None,
-        }
-    }
-
-    pub fn nested<F, T>(parent: &Rc<RefCell<Environment>>, f: F) -> T
-    where
-        F: FnOnce(Rc<RefCell<Self>>) -> T,
-    {
-        let child = Self {
-            data: HashMap::new(),
-            parent: Some(Rc::clone(parent)),
-        };
-        f(Rc::new(RefCell::new(child)))
-    }
-
-    pub fn define<S: ToString>(&mut self, name: S, value: Option<Rc<RefCell<Value>>>) {
-        self.data
-            .insert(name.to_string(), Rc::new(RefCell::new(value.into())));
-    }
-
-    #[must_use]
-    pub fn assign(
-        &mut self,
-        distance: Option<usize>,
-        name: &Token,
-        value: Rc<RefCell<Value>>,
-    ) -> bool {
-        match (distance, self.parent.as_ref()) {
-            (None, Some(parent)) => parent.borrow_mut().assign(None, name, value),
-            (None, None) | (Some(0), _) => {
-                if self.data.contains_key(&name.lexeme) {
-                    self.data.insert(
-                        name.lexeme.clone(),
-                        Rc::new(RefCell::new(Some(value).into())),
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            (Some(n), Some(parent)) => parent.borrow_mut().assign(Some(n - 1), name, value),
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn get(&self, distance: Option<usize>, name: &Token) -> Option<Rc<RefCell<Variable>>> {
-        match (distance, self.parent.as_ref()) {
-            (None, Some(parent)) => parent.borrow().get(None, name),
-            (None, None) | (Some(0), _) => self.data.get(&name.lexeme).map(Rc::clone),
-            (Some(n), Some(parent)) => parent.borrow().get(Some(n - 1), name),
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl std::fmt::Display for Environment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "ENV START")?;
-        for (name, var) in self.data.iter() {
-            write!(f, "{}={} ", name, var.borrow())?;
-        }
-        if let Some(parent) = &self.parent {
-            write!(f, "{}", parent.borrow())?;
-        }
-        writeln!(f, "ENV END")?;
-        Ok(())
-    }
-}
-
 impl std::fmt::Display for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Variable::Uninitialized => write!(f, "<uninitialized>"),
             Variable::Value(v) => write!(f, "{}", v.borrow()),
         }
+    }
+}
+#[derive(PartialEq, Debug, Default)]
+pub struct GlobalEnvironment {
+    globals: HashMap<String, Rc<RefCell<Variable>>>,
+}
+
+#[derive(PartialEq, Debug, Default)]
+pub struct LocalEnvironment {
+    data: Vec<Rc<RefCell<Variable>>>,
+    parent: Option<Rc<RefCell<LocalEnvironment>>>,
+}
+
+impl GlobalEnvironment {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn define<S: ToString>(&mut self, name: S, value: Option<Rc<RefCell<Value>>>) {
+        self.globals
+            .insert(name.to_string(), Rc::new(RefCell::new(value.into())));
+    }
+
+    #[must_use]
+    pub fn assign(&mut self, name: &Token, value: Option<Rc<RefCell<Value>>>) -> bool {
+        if !self.globals.contains_key(&name.lexeme) {
+            return false;
+        }
+
+        self.globals
+            .insert(name.lexeme.clone(), Rc::new(RefCell::new(value.into())));
+        true
+    }
+
+    pub fn get(&self, name: &Token) -> Option<Rc<RefCell<Variable>>> {
+        self.globals.get(&name.lexeme).map(Rc::clone)
+    }
+}
+
+impl LocalEnvironment {
+    pub fn nested<F, T>(parent: Option<Rc<RefCell<LocalEnvironment>>>, f: F) -> T
+    where
+        F: FnOnce(Rc<RefCell<Self>>) -> T,
+    {
+        let child = LocalEnvironment {
+            data: Default::default(),
+            parent,
+        };
+        f(Rc::new(RefCell::new(child)))
+    }
+
+    // Possible optimization: remember (in `Resolver`?) the number of variables per scope,
+    // create `self.data` accordingly
+    pub fn assign(&mut self, binding: &Binding, value: Option<Rc<RefCell<Value>>>) {
+        if binding.scopes_up > 0 {
+            return self
+                .parent
+                .as_mut()
+                .expect("Ran out of assign scopes :(")
+                .borrow_mut()
+                .assign(&binding.less_one_scope(), value);
+        }
+
+        // There's room for micro-optimizations here, but w/e TBH
+        while self.data.len() <= binding.index_in_scope {
+            self.data
+                .push(Rc::new(RefCell::new(Variable::Uninitialized)));
+        }
+        self.data[binding.index_in_scope] = Rc::new(RefCell::new(value.into()));
+    }
+
+    pub fn get(&self, binding: &Binding) -> Rc<RefCell<Variable>> {
+        if binding.scopes_up > 0 {
+            return self
+                .parent
+                .as_ref()
+                .expect("Ran out of get scopes :(")
+                .borrow()
+                .get(&binding.less_one_scope());
+        }
+        Rc::clone(&self.data[binding.index_in_scope])
     }
 }

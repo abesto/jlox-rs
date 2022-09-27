@@ -6,9 +6,9 @@ use thiserror::Error;
 
 use crate::{
     ast::{Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor, Walkable},
-    environment::{Environment, Variable},
+    environment::{LocalEnvironment, Variable, GlobalEnvironment},
     token::{Token, TokenValue},
-    types::{Number, SourceLocation}, resolver::{Bindings, CommandIndex},
+    types::{Number, SourceLocation}, resolver::{Bindings, CommandIndex, Binding},
 };
 
 #[derive(Derivative)]
@@ -29,17 +29,17 @@ pub enum Value {
             PartialEq(compare_with = "always_equals"),
         )]
         #[allow(clippy::type_complexity)]
-        fun: fn(&mut Interpreter, Rc<RefCell<Environment>>, Vec<Rc<RefCell<Value>>>) -> Value,
+        fun: fn(&mut Interpreter, Vec<Rc<RefCell<Value>>>) -> Value,
     },
 
     Function {
         declaration: Function,
-        closure: Rc<RefCell<Environment>>,
+        closure: Locals,
     },
 
     Lambda {
         declaration: Lambda,
-        closure: Rc<RefCell<Environment>>,
+        closure: Locals,
     },
 }
 
@@ -84,12 +84,11 @@ impl Value {
     fn call(
         &self,
         interpreter: &mut Interpreter,
-        env: Rc<RefCell<Environment>>,
         args: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>> {
         match self {
             Value::NativeFunction { fun, .. } => {
-                Ok(Rc::new(RefCell::new(fun(interpreter, env, args))))
+                Ok(Rc::new(RefCell::new(fun(interpreter, args))))
             }
             Value::Function {
                 declaration: Function { params, body, .. },
@@ -98,12 +97,12 @@ impl Value {
             | Value::Lambda {
                 declaration: Lambda { params, body, .. },
                 closure,
-            } => Environment::nested(closure, |env| {
+            } => LocalEnvironment::nested(OptRc::clone(closure), |function_scope| {
                 for (param, arg) in params.iter().zip(args) {
-                    env.borrow_mut().define(&param.lexeme, Some(arg))
+                    function_scope.borrow_mut().assign(interpreter.binding(param).unwrap(), Some(arg))
                 }
                 interpreter
-                    .execute_block(body, env)
+                    .execute_block(body, Some(function_scope))
                     .map(Option::unwrap_or_default)
             }),
             _ => panic!(
@@ -182,41 +181,57 @@ pub enum Error {
 }
 
 pub type Result<V = Option<Rc<RefCell<Value>>>, E = Error> = std::result::Result<V, E>;
+type Globals = Rc<RefCell<GlobalEnvironment>>;
+type Locals = Option<Rc<RefCell<LocalEnvironment>>>;
+
+// Convenience syntax: `OptRc::clone`, to remain explicit about how cloning a `Locals`
+// establishes a new `Rc` reference
+struct OptRc {}
+impl OptRc {
+    fn clone(x: &Locals) -> Locals {
+        x.as_ref().cloned()
+    }
+}
 
 #[derive(Default)]
 pub struct Interpreter {
     pub command: CommandIndex,
     bindings: Bindings,
+    globals: Globals
 }
 
 impl Interpreter {
     #[must_use]
-    pub fn new() -> Self {
-        Self { ..Default::default() }
+    pub fn new(globals: Globals) -> Self {
+        Self { globals, ..Default::default() }
     }
 
     pub fn update_bindings(&mut self, bindings: Bindings) {
         self.bindings.extend(bindings.into_iter());
     }
 
+    pub fn binding(&self, name: &Token) -> Option<&Binding> {
+        self.bindings.get(&name.location)
+    }
+
     fn evaluate(
         &mut self,
         expr: &Expr,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals
     ) -> Result<Rc<RefCell<Value>>> {
-        expr.walk(self, env)
+        expr.walk(self, locals)
     }
 
-    pub fn interpret(&mut self, program: &[Stmt], env: Rc<RefCell<Environment>>) -> Result {
+    pub fn interpret(&mut self, program: &[Stmt]) -> Result {
         let mut ret = None;
         for stmt in program {
-            ret = self.execute(stmt, Rc::clone(&env))?;
+            ret = self.execute(stmt, None)?;
         }
         Ok(ret)
     }
 
-    fn execute(&mut self, stmt: &Stmt, env: Rc<RefCell<Environment>>) -> Result {
-        stmt.walk(self, env)
+    fn execute(&mut self, stmt: &Stmt, locals: Locals) -> Result {
+        stmt.walk(self, locals)
     }
 
     fn err_invalid_operand<V, S: ToString>(
@@ -233,19 +248,19 @@ impl Interpreter {
         })
     }
 
-    fn execute_block(&mut self, statements: &[Stmt], env: Rc<RefCell<Environment>>) -> Result {
+    fn execute_block(&mut self, statements: &[Stmt], locals: Locals) -> Result {
         statements
             .iter()
-            .map(|stmt| self.execute(stmt, Rc::clone(&env)))
+            .map(|stmt| self.execute(stmt, OptRc::clone(&locals)))
             .try_fold(None, |_, x| x)
     }
 }
 
-impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut Interpreter {
+impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
     fn visit_literal(
         self,
         x: &crate::ast::Literal,
-        _: Rc<RefCell<Environment>>,
+        _: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
         Ok(Rc::new(RefCell::new(match x {
             Literal::Nil => Value::Nil,
@@ -259,9 +274,9 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     fn visit_unary(
         self,
         x: &crate::ast::Unary,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals
     ) -> Result<Rc<RefCell<Value>>> {
-        let right = self.evaluate(&x.right, env)?;
+        let right = self.evaluate(&x.right, locals)?;
 
         match x.operator.value {
             TokenValue::Minus => match &*right.borrow() {
@@ -278,11 +293,11 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     fn visit_binary(
         self,
         x: &crate::ast::Binary,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals
     ) -> Result<Rc<RefCell<Value>>> {
-        let left_rc = self.evaluate(&x.left, Rc::clone(&env))?;
+        let left_rc = self.evaluate(&x.left, OptRc::clone(&locals))?;
         let left = &*left_rc.borrow();
-        let right_rc = &*self.evaluate(&x.right, Rc::clone(&env))?;
+        let right_rc = &*self.evaluate(&x.right, OptRc::clone(&locals))?;
         let right = &*right_rc.borrow();
         let op = &x.operator;
 
@@ -369,40 +384,44 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     fn visit_ternary(
         self,
         x: &crate::ast::Ternary,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
-        let cond = self.evaluate(&x.left, Rc::clone(&env))?;
+        let cond = self.evaluate(&x.left, OptRc::clone(&locals))?;
         if cond.borrow().is_truthy() {
-            self.evaluate(&x.mid, Rc::clone(&env))
+            self.evaluate(&x.mid, OptRc::clone(&locals))
         } else {
-            self.evaluate(&x.right, Rc::clone(&env))
+            self.evaluate(&x.right, OptRc::clone(&locals))
         }
     }
 
     fn visit_grouping(
         self,
         x: &crate::ast::Grouping,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
-        self.evaluate(&x.expr, env)
+        self.evaluate(&x.expr, locals)
     }
 
     fn visit_variable(
         self,
         x: &crate::ast::Variable,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
-        let distance = self.bindings.get(&x.name.location).cloned();
-        let var_opt = env.borrow().get(distance, &x.name);
-        match var_opt {
-            Some(var) => match &*var.borrow() {
-                Variable::Value(v) => Ok(Rc::clone(v)),
-                Variable::Uninitialized => Err(Error::UninitializedVariable {
+        let var = match self.binding(&x.name) {
+            Some(binding) => locals.unwrap().borrow().get(binding),
+            None => match self.globals.borrow().get(&x.name) {
+                Some(v) => v,
+                None => return Err(Error::UndefinedVariable {
                     name: x.name.lexeme.clone(),
                     location: x.name.location,
                 }),
-            },
-            None => Err(Error::UndefinedVariable {
+            }
+        };
+
+        let var = var.borrow();
+        match &*var {
+            Variable::Value(v) => Ok(Rc::clone(v)),
+            Variable::Uninitialized => Err(Error::UninitializedVariable {
                 name: x.name.lexeme.clone(),
                 location: x.name.location,
             }),
@@ -412,26 +431,31 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     fn visit_assign(
         self,
         x: &crate::ast::Assign,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
-        let value = self.evaluate(&x.value, Rc::clone(&env))?;
-        let distance = self.bindings.get(&x.name.location).cloned();
-        if !env.borrow_mut().assign(distance, &x.name, Rc::clone(&value)) {
-            Err(Error::UndefinedVariable {
-                name: x.name.lexeme.clone(),
-                location: x.name.location,
-            })
-        } else {
-            Ok(value)
-        }
+        let value = self.evaluate(&x.value, OptRc::clone(&locals))?;
+        match self.binding(&x.name) {
+            Some(binding) => {
+                locals.unwrap().borrow_mut().assign(binding, Some(Rc::clone(&value)));
+            },
+            None => {
+                if !self.globals.borrow_mut().assign(&x.name, Some(Rc::clone(&value))) {
+                    return Err(Error::UndefinedVariable {
+                        name: x.name.lexeme.clone(),
+                        location: x.name.location,
+                    });
+                }
+            }
+        };
+        Ok(value)
     }
 
     fn visit_logical(
         self,
         x: &crate::ast::Logical,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
-        let left = self.evaluate(&x.left, Rc::clone(&env))?;
+        let left = self.evaluate(&x.left, OptRc::clone(&locals))?;
         if x.operator.value == TokenValue::Or {
             if left.borrow().is_truthy() {
                 return Ok(left);
@@ -439,15 +463,15 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         } else if !left.borrow().is_truthy() {
             return Ok(left);
         }
-        self.evaluate(&x.right, env)
+        self.evaluate(&x.right, locals)
     }
 
     fn visit_call(
         self,
         call: &crate::ast::Call,
-        state: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
-        let value_rc = self.evaluate(&call.callee, Rc::clone(&state))?;
+        let value_rc = self.evaluate(&call.callee, OptRc::clone(&locals))?;
         let value = &*value_rc.borrow();
         let callee = match value {
             f @ Value::NativeFunction { .. }
@@ -462,7 +486,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
         let arguments = call
             .arguments
             .iter()
-            .map(|arg| self.evaluate(arg, Rc::clone(&state)))
+            .map(|arg| self.evaluate(arg, OptRc::clone(&locals)))
             .collect::<Result<Vec<_>>>()?;
 
         if arguments.len() != callee.arity() {
@@ -473,7 +497,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
             });
         }
 
-        match callee.call(self, state, arguments) {
+        match callee.call(self, arguments) {
             Err(Error::Return { value, .. }) => Ok(value),
             x => x,
         }
@@ -482,49 +506,49 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Rc<RefCell<Environment>>> for &mut 
     fn visit_lambda(
         self,
         x: &crate::ast::Lambda,
-        state: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Rc<RefCell<Value>>> {
         Ok(Rc::new(RefCell::new(Value::Lambda {
             declaration: x.clone(),
-            closure: Rc::clone(&state),
+            closure: locals,
         })))
     }
 }
 
-impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
+impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
     for &mut Interpreter
 {
     fn visit_block(
         self,
         x: &crate::ast::Block,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
-        Environment::nested(&env, |block_env| {
-            self.execute_block(&x.statements, block_env)
+        LocalEnvironment::nested(OptRc::clone(&locals), |block_env| {
+            self.execute_block(&x.statements, Some(block_env))
         })
     }
 
     fn visit_expression(
         self,
         x: &crate::ast::Expression,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
-        self.evaluate(&x.expr, env).map(Some)
+        self.evaluate(&x.expr, locals).map(Some)
     }
 
     fn visit_if(
         self,
         x: &crate::ast::If,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         if self
-            .evaluate(&x.condition, Rc::clone(&env))?
+            .evaluate(&x.condition, OptRc::clone(&locals))?
             .borrow()
             .is_truthy()
         {
-            self.execute(&x.then_branch, env)
+            self.execute(&x.then_branch, locals)
         } else if let Some(branch) = &x.else_branch {
-            self.execute(branch, env)
+            self.execute(branch, locals)
         } else {
             Ok(None)
         }
@@ -533,37 +557,40 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     fn visit_print(
         self,
         x: &crate::ast::Print,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
-        println!("{}", self.evaluate(&x.expr, env)?.borrow());
+        println!("{}", self.evaluate(&x.expr, locals)?.borrow());
         Ok(None)
     }
 
     fn visit_var(
         self,
         x: &crate::ast::Var,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         let value = match &x.initializer {
-            Some(expr) => Some(self.evaluate(expr, Rc::clone(&env))?),
+            Some(expr) => Some(self.evaluate(expr, OptRc::clone(&locals))?),
             None => None,
         };
 
-        env.borrow_mut().define(&x.name.lexeme, value);
+        match self.binding(&x.name) {
+            None => self.globals.borrow_mut().define(&x.name.lexeme, value),
+            Some(binding) => locals.unwrap().borrow_mut().assign(binding, value)
+        }
         Ok(None)
     }
 
     fn visit_while(
         self,
         x: &crate::ast::While,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         while self
-            .evaluate(&x.condition, Rc::clone(&env))?
+            .evaluate(&x.condition, OptRc::clone(&locals))?
             .borrow()
             .is_truthy()
         {
-            match self.execute(&x.statement, Rc::clone(&env)) {
+            match self.execute(&x.statement, OptRc::clone(&locals)) {
                 Err(Error::Break { .. }) => return Ok(None),
                 x => x?,
             };
@@ -574,7 +601,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     fn visit_break(
         self,
         x: &crate::ast::Break,
-        _env: Rc<RefCell<Environment>>,
+        _locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         Err(Error::Break {
             location: x.token.location,
@@ -584,25 +611,30 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Rc<RefCell<Environment>>>
     fn visit_function(
         self,
         x: &Function,
-        state: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         let fun = Value::Function {
             declaration: x.clone(),
-            closure: Rc::clone(&state),
+            closure: OptRc::clone(&locals),
         };
-        state
-            .borrow_mut()
-            .define(x.name.lexeme.clone(), Some(Rc::new(RefCell::new(fun))));
+
+        let value = Some(Rc::new(RefCell::new(fun)));
+        match self.binding(&x.name) {
+            None => self.globals
+                .borrow_mut()
+                .define(x.name.lexeme.clone(), value),
+            Some(binding) => locals.unwrap().borrow_mut().assign(binding, value)
+        };
         Ok(None)
     }
 
     fn visit_return(
         self,
         ret: &crate::ast::Return,
-        env: Rc<RefCell<Environment>>,
+        locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
         let value = if let Some(value_expr) = &ret.value {
-            self.evaluate(value_expr, env)?
+            self.evaluate(value_expr, locals)?
         } else {
             Rc::new(RefCell::new(Value::Nil))
         };

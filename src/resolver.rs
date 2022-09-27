@@ -47,7 +47,24 @@ pub enum Error {
 
 type Output = ();
 pub type CommandIndex = usize;
-pub type Bindings = HashMap<SourceLocation, usize>;
+
+#[derive(Debug)]
+pub struct Binding {
+    pub scopes_up: usize,
+    pub index_in_scope: usize,
+}
+
+impl Binding {
+    pub fn less_one_scope(&self) -> Self {
+        Self {
+            scopes_up: self.scopes_up - 1,
+            index_in_scope: self.index_in_scope,
+        }
+    }
+}
+
+pub type Bindings = HashMap<SourceLocation, Binding>;
+
 type State = Bindings;
 type Result<T = Output, E = Vec<Error>> = std::result::Result<T, E>;
 
@@ -95,15 +112,31 @@ enum VariableState {
 struct VariableData {
     state: VariableState,
     declared_at: SourceLocation,
+    index_in_scope: usize,
 }
 
 impl VariableData {
     #[must_use]
-    fn new(declared_at: SourceLocation) -> Self {
+    fn new(declared_at: SourceLocation, index_in_scope: usize) -> Self {
         Self {
             state: VariableState::Declared,
             declared_at,
+            index_in_scope,
         }
+    }
+}
+
+#[derive(Default)]
+struct Scope {
+    vars: HashMap<String, VariableData>,
+    next_index: usize,
+}
+
+impl Scope {
+    fn reserve(&mut self) -> usize {
+        let n = self.next_index;
+        self.next_index += 1;
+        n
     }
 }
 
@@ -115,7 +148,7 @@ pub struct ResolverConfig {
 #[derive(Default)]
 pub struct Resolver {
     config: ResolverConfig,
-    scopes: Vec<HashMap<String, VariableData>>,
+    scopes: Vec<Scope>,
     current_function: FunctionType,
 }
 
@@ -136,6 +169,7 @@ impl Resolver {
         if let Some(scope) = self.scopes.pop() {
             if self.config.error_on_unused_locals {
                 let errors: Vec<Error> = scope
+                    .vars
                     .iter()
                     .filter(|(_, v)| v.state != VariableState::Used)
                     .map(|(k, v)| Error::UnusedLocal {
@@ -166,8 +200,9 @@ impl Resolver {
     }
 
     fn resolve_local(&mut self, name: &Token, state: &mut State) -> Result {
+        let scopes_len = self.scopes.len();
         for (i, scope) in self.scopes.iter_mut().enumerate().rev() {
-            if let Some(var) = scope.get_mut(&name.lexeme) {
+            if let Some(var) = scope.vars.get_mut(&name.lexeme) {
                 if var.state == VariableState::Declared {
                     return Err(vec![Error::UseBeforeInit {
                         name: name.lexeme.clone(),
@@ -178,7 +213,13 @@ impl Resolver {
                 if var.state >= VariableState::Defined && var.state < VariableState::Used {
                     var.state = VariableState::Used;
                 }
-                state.insert(name.location, self.scopes.len() - 1 - i);
+                state.insert(
+                    name.location,
+                    Binding {
+                        scopes_up: scopes_len - 1 - i,
+                        index_in_scope: var.index_in_scope,
+                    },
+                );
                 return Ok(());
             }
         }
@@ -187,20 +228,24 @@ impl Resolver {
 
     fn declare(&mut self, name: &Token) -> Result {
         if let Some(scope) = self.scopes.last_mut() {
-            if scope.contains_key(&name.lexeme) {
+            if scope.vars.contains_key(&name.lexeme) {
                 return Err(vec![Error::DoubleDeclaration {
                     name: name.lexeme.clone(),
                     location: name.location,
                 }]);
             }
-            scope.insert(name.lexeme.clone(), VariableData::new(name.location));
+            let index_in_scope = scope.reserve();
+            scope.vars.insert(
+                name.lexeme.clone(),
+                VariableData::new(name.location, index_in_scope),
+            );
         }
         Ok(())
     }
 
     fn define(&mut self, name: &Token) -> Result {
         if let Some(scope) = self.scopes.last_mut() {
-            if let Some(var) = scope.get_mut(&name.lexeme) {
+            if let Some(var) = scope.vars.get_mut(&name.lexeme) {
                 if var.state < VariableState::Defined {
                     var.state = VariableState::Defined;
                 }
@@ -226,7 +271,12 @@ impl Resolver {
 
         let mut result = Ok(());
         for param in params {
-            result = combine_many_results([result, self.declare(param), self.define(param)]);
+            result = combine_many_results([
+                result,
+                self.declare(param),
+                self.define(param),
+                self.resolve_local(param, state),
+            ]);
         }
         result = combine_many_results([
             result,
@@ -243,7 +293,8 @@ impl Resolver {
 impl ExprVisitor<Result, &mut State> for &mut Resolver {
     fn visit_variable(self, expr: &crate::ast::Variable, state: &mut State) -> Result {
         if let Some(scope) = self.scopes.last() {
-            if scope.get(&expr.name.lexeme).map(|d| &d.state) == Some(&VariableState::Declared) {
+            if scope.vars.get(&expr.name.lexeme).map(|d| &d.state) == Some(&VariableState::Declared)
+            {
                 return Err(vec![Error::SelfReferencingInitializer {
                     name: expr.name.lexeme.clone(),
                     location: expr.name.location,
@@ -326,6 +377,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             self.declare(&stmt.name),
             self.define(&stmt.name),
             self.resolve_function(&stmt.params, &stmt.body, FunctionType::Function, state),
+            self.resolve_local(&stmt.name, state),
         ])
     }
 
@@ -367,6 +419,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
                 Ok(())
             },
             self.define(&stmt.name),
+            self.resolve_local(&stmt.name, state),
         ])
     }
 
