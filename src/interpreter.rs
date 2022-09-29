@@ -11,6 +11,17 @@ use crate::{
     types::{Number, SourceLocation}, resolver::{Bindings, CommandIndex, Binding},
 };
 
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub struct Class {
+    name: String
+}
+
+impl std::fmt::Display for Class {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<class '{}'>", self.name)
+    }
+}
+
 #[derive(Derivative)]
 #[derivative(Debug, PartialEq, Clone, Default)]
 pub enum Value {
@@ -42,8 +53,10 @@ pub enum Value {
         closure: Locals,
     },
 
-    Class {
-        name: String,
+    Class(Rc<RefCell<Class>>),
+
+    Instance {
+        class: Rc<RefCell<Class>>
     }
 }
 
@@ -58,16 +71,16 @@ impl Value {
 
     pub fn type_of(&self) -> String {
         match self {
-            Self::Nil => "Nil",
-            Self::Boolean(_) => "Boolean",
-            Self::Number(_) => "Number",
-            Self::String(_) => "String",
-            Self::NativeFunction { .. } => "Function",
-            Self::Function { .. } => "Function",
-            Self::Lambda { .. } => "Function",
-            Self::Class { .. } => "Class"
+            Self::Nil => "Nil".to_string(),
+            Self::Boolean(_) => "Boolean".to_string(),
+            Self::Number(_) => "Number".to_string(),
+            Self::String(_) => "String".to_string(),
+            Self::NativeFunction { .. } => "Function".to_string(),
+            Self::Function { .. } => "Function".to_string(),
+            Self::Lambda { .. } => "Function".to_string(),
+            Self::Class ( .. ) => "Class".to_string(),
+            Self::Instance { class, .. } => format!("{}", class.borrow())
         }
-        .to_string()
     }
 
     fn repr(&self) -> String {
@@ -82,6 +95,7 @@ impl Value {
             Value::NativeFunction { arity, .. } => *arity,
             Value::Function { declaration: Function { params, .. }, .. } 
             | Value::Lambda { declaration: Lambda { params, ..}, .. } => params.len(),
+            Value::Class(_) => 0,
             _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
         }
     }
@@ -95,6 +109,7 @@ impl Value {
             Value::NativeFunction { fun, .. } => {
                 Ok(Rc::new(RefCell::new(fun(interpreter, args))))
             }
+
             Value::Function {
                 declaration: Function { params, body, .. },
                 closure,
@@ -110,6 +125,13 @@ impl Value {
                     .execute_block(body, Some(function_scope))
                     .map(Option::unwrap_or_default)
             }),
+
+            Value::Class(class) => {
+                Ok(Rc::new(RefCell::new(Value::Instance {
+                    class: Rc::clone(class)
+                })))
+            },
+
             _ => panic!(
                 "Internal error: tried to invoke non-callable; this should've been caught sooner"
             ),
@@ -129,7 +151,8 @@ impl std::fmt::Display for Value {
                 write!(f, "<function {}>", declaration.name.lexeme)
             }
             Self::Lambda { .. } => write!(f, "<anonymous function>"),
-            Self::Class { name, .. } => write!(f, "<class '{}'>", name)
+            Self::Class(class)  => class.borrow().fmt(f),
+            Self::Instance{class, ..} => write!(f, "<{} object>", class.borrow().name)
         }
     }
 }
@@ -482,7 +505,8 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         let callee = match value {
             f @ Value::NativeFunction { .. }
             | f @ Value::Lambda { .. }
-            | f @ Value::Function { .. } => Ok(f),
+            | f @ Value::Function { .. }
+            | f @ Value::Class(_) => Ok(f),
             what => Err(Error::NotCallable {
                 what: what.clone(),
                 location: call.closing_paren.location,
@@ -660,9 +684,13 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
 
         }
 
-        let class = Rc::new(RefCell::new(Value::Class {
-            name: stmt.name.lexeme.clone()
-        }));
+        let class = Rc::new(RefCell::new(Value::Class(
+            Rc::new(RefCell::new(
+                Class {
+                    name: stmt.name.lexeme.clone()
+                }
+            ))
+        )));
 
         if let Some(binding) = binding {
             state.unwrap().borrow_mut().assign(binding, Some(class));

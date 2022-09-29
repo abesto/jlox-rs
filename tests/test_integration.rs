@@ -376,3 +376,10 @@ repl_test!(class_declaration, {
     > "print First;"
     "<class 'First'>"
 });
+
+repl_test!(print_instance, {
+    > "class C {}"
+    > "var o = C();"
+    > "print o;"
+    "<C object>"
+});
