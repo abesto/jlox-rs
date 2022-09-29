@@ -83,7 +83,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// factor       = unary ( ( "/" | "*" ) unary )* ;
 /// unary        = ( "!" | "-" ) unary
 ///              | call ;
-/// call         = primary ( "(" arguments ")" )* ;
+/// call         = primary ( "(" arguments ")" | "." IDENTIFIER )* ;
 /// arguments    = expression ( "," expression )* ;
 /// primary      = NUMBER | STRING | "true" | "false" | "nil"
 ///              | "(" expression ")"
@@ -172,6 +172,10 @@ impl Parser {
         }
     }
 
+    fn consume_identifier<S: ToString>(&mut self, msg: S) -> Result<&Token> {
+        self.consume(&|t: &Token| matches!(t.value, TV::Identifier(_)), msg)
+    }
+
     fn check(&self, pred: &impl TokenPred) -> bool {
         self.tokens
             .get(self.current)
@@ -224,10 +228,7 @@ impl Parser {
 
     fn function(&mut self, kind: &str) -> Result<Function> {
         let name = self
-            .consume(
-                &|t: &Token| matches!(t.value, TV::Identifier(_)),
-                format!("Expected {} name", kind),
-            )?
+            .consume_identifier(format!("Expected {} name", kind))?
             .clone();
         self.consume(&TV::LeftParen, format!("Expected `(` after {} name", kind))?;
 
@@ -274,12 +275,7 @@ impl Parser {
     }
 
     fn var_declaration(&mut self) -> Result<Stmt> {
-        let name = self
-            .consume(
-                &|t: &Token| matches!(t.value, TV::Identifier(_)),
-                "Expected variable name",
-            )?
-            .clone();
+        let name = self.consume_identifier("Expected variable name")?.clone();
         let initializer = if self.match_(&[TV::Equal]) {
             Some(Box::new(self.expression()?))
         } else {
@@ -291,12 +287,7 @@ impl Parser {
     }
 
     fn class_declaration(&mut self) -> Result<Stmt> {
-        let name = self
-            .consume(
-                &|t: &Token| matches!(t.value, TV::Identifier(_)),
-                "Expected class name",
-            )?
-            .clone();
+        let name = self.consume_identifier("Expected class name")?.clone();
         self.consume(&TV::LeftBrace, "Expected `{` before class body")?;
 
         let mut methods = vec![];
@@ -645,6 +636,14 @@ impl Parser {
         loop {
             if self.match_(&[TV::LeftParen]) {
                 expr = self.finish_call(expr)?;
+            } else if self.match_(&[TV::Dot]) {
+                let name = self
+                    .consume_identifier("Expected property name after `.`")?
+                    .clone();
+                expr = Expr::Get(Get {
+                    name,
+                    object: Box::new(expr),
+                })
             } else {
                 break;
             }

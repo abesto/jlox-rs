@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, collections::HashMap};
 
 use derivative::Derivative;
 use macros::ResolveErrorLocation;
@@ -56,7 +56,8 @@ pub enum Value {
     Class(Rc<RefCell<Class>>),
 
     Instance {
-        class: Rc<RefCell<Class>>
+        class: Rc<RefCell<Class>>,
+        fields: HashMap<String, Rc<RefCell<Value>>>
     }
 }
 
@@ -128,13 +129,27 @@ impl Value {
 
             Value::Class(class) => {
                 Ok(Rc::new(RefCell::new(Value::Instance {
-                    class: Rc::clone(class)
+                    class: Rc::clone(class),
+                    fields: Default::default()
                 })))
             },
 
             _ => panic!(
                 "Internal error: tried to invoke non-callable; this should've been caught sooner"
             ),
+        }
+    }
+
+    fn get(&self, name: &Token) -> Result<Rc<RefCell<Value>>> {
+        match self {
+            Value::Instance { fields, .. } => {
+                if let Some(value) = fields.get(&name.lexeme) {
+                    Ok(Rc::clone(value))
+                } else {
+                    Err(Error::UndefinedProperty { object: self.clone(), property: name.lexeme.clone(), location: name.location })
+                }
+            },
+            _ => Err(Error::PropertyOnNonObject { non_object: self.clone(), property: name.lexeme.clone(), location: name.location })
         }
     }
 }
@@ -207,6 +222,16 @@ pub enum Error {
         location: SourceLocation,
         value: Rc<RefCell<Value>>,
     },
+
+    #[error("Tried to access property `{property}` on non-object `{non_object}` of type `{}` at {location}", .non_object.type_of())]
+    PropertyOnNonObject {
+        non_object: Value,
+        property: String,
+        location: SourceLocation
+    },
+
+    #[error("Undefined property `{property}` on `{object}` at {location}")]
+    UndefinedProperty { object: Value, property: String, location: SourceLocation },
 }
 
 pub type Result<V = Option<Rc<RefCell<Value>>>, E = Error> = std::result::Result<V, E>;
@@ -542,6 +567,10 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             declaration: x.clone(),
             closure: locals,
         })))
+    }
+
+    fn visit_get(self,expr: &crate::ast::Get,state:Locals) -> Result<Rc<RefCell<Value>>> {
+        self.evaluate(&expr.object, state)?.borrow().get(&expr.name)
     }
 }
 

@@ -69,6 +69,10 @@ ast! {
             pub closing_paren: Token,
             pub arguments: Vec<Expr>,
         },
+        Get: struct {
+            pub object: Box<Expr>,
+            pub name: Token
+        },
         Logical: struct {
             pub left: Box<Expr>,
             pub operator: Token,
@@ -189,6 +193,7 @@ impl std::fmt::Display for Expr {
                 }
                 write!(f, ")")
             }
+            Expr::Get(Get { object, name }) => write!(f, "{}.{}", object, name),
         }
     }
 }

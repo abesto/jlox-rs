@@ -357,6 +357,10 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
     fn visit_grouping(self, expr: &crate::ast::Grouping, state: &mut State) -> Result {
         expr.expr.walk(self, state)
     }
+
+    fn visit_get(self, expr: &crate::ast::Get, state: &mut State) -> Result {
+        expr.object.walk(self, state)
+    }
 }
 
 impl StmtVisitor<Result, &mut State> for &mut Resolver {
