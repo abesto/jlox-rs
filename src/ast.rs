@@ -103,6 +103,10 @@ ast! {
         Expression: struct {
             pub expr: Expr
         },
+        Class: struct {
+            pub name: Token,
+            pub methods: Vec<Function>,
+        },
         Function: struct {
             pub name: Token,
             pub params: Vec<Token>,

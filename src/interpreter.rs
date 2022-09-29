@@ -41,6 +41,10 @@ pub enum Value {
         declaration: Lambda,
         closure: Locals,
     },
+
+    Class {
+        name: String,
+    }
 }
 
 fn always_equals<T>(_: &T, _: &T) -> bool {
@@ -61,6 +65,7 @@ impl Value {
             Self::NativeFunction { .. } => "Function",
             Self::Function { .. } => "Function",
             Self::Lambda { .. } => "Function",
+            Self::Class { .. } => "Class"
         }
         .to_string()
     }
@@ -124,6 +129,7 @@ impl std::fmt::Display for Value {
                 write!(f, "<function {}>", declaration.name.lexeme)
             }
             Self::Lambda { .. } => write!(f, "<anonymous function>"),
+            Self::Class { name, .. } => write!(f, "<class '{}'>", name)
         }
     }
 }
@@ -643,5 +649,27 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
             location: ret.keyword.location,
             value,
         })
+    }
+
+    fn visit_class(self,stmt: &crate::ast::Class,state:Locals) -> Result<Option<Rc<RefCell<Value>>>> {
+        let binding = self.binding(&stmt.name);
+        if let Some(binding) = binding {
+            state.as_ref().unwrap().borrow_mut().assign(binding, None);
+        } else {
+            self.globals.borrow_mut().define(&stmt.name, None);
+
+        }
+
+        let class = Rc::new(RefCell::new(Value::Class {
+            name: stmt.name.lexeme.clone()
+        }));
+
+        if let Some(binding) = binding {
+            state.unwrap().borrow_mut().assign(binding, Some(class));
+        } else {
+            let _ = self.globals.borrow_mut().assign(&stmt.name, Some(class));
+        }
+
+        Ok(None)
     }
 }

@@ -433,4 +433,12 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     fn visit_break(self, _stmt: &crate::ast::Break, _state: &mut State) -> Result {
         Ok(())
     }
+
+    fn visit_class(self, stmt: &crate::ast::Class, state: &mut State) -> Result {
+        combine_many_results([
+            self.declare(&stmt.name),
+            self.define(&stmt.name),
+            self.resolve_local(&stmt.name, state),
+        ])
+    }
 }

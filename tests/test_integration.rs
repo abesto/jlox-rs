@@ -370,3 +370,9 @@ program_test!(unused_local, {
     E "Unused local variable `x`, declared at 1:8"
     E "Variable resolution failed, see errors above."
 });
+
+repl_test!(class_declaration, {
+    > "class First {}"
+    > "print First;"
+    "<class 'First'>"
+});

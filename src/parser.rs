@@ -37,9 +37,11 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// program      = declaration* EOF ;
 ///
-/// declaration  = funDecl
+/// declaration  = classDecl
+///              | funDecl
 ///              | varDecl
 ///              | statement ;
+/// classDecl    = "class" IDENTIFIER "{" function* "}" ;
 /// funDecl      = "fun" function ;
 /// function     = IDENTIFIER "(" parameters? ")" block ;
 /// parameters   = IDENTIFIER ( "," IDENTIFIER )* ;
@@ -193,7 +195,9 @@ impl Parser {
 
     fn declaration(&mut self) -> Result<Stmt> {
         let res = if self.match_(&[TV::Fun]) {
-            self.function("function")
+            self.function_statement()
+        } else if self.match_(&[TV::Class]) {
+            self.class_declaration()
         } else if self.match_(&[TV::Var]) {
             self.var_declaration()
         } else {
@@ -205,7 +209,7 @@ impl Parser {
         res
     }
 
-    fn function(&mut self, kind: &str) -> Result<Stmt> {
+    fn function_statement(&mut self) -> Result<Stmt> {
         if !self.check(&|t: &Token| matches!(t.value, TV::Identifier(_))) {
             let lambda = self.lambda()?;
             self.consume(
@@ -215,6 +219,10 @@ impl Parser {
             return Ok(Stmt::Expression(Expression { expr: lambda }));
         }
 
+        Ok(Stmt::Function(self.function("function")?))
+    }
+
+    fn function(&mut self, kind: &str) -> Result<Function> {
         let name = self
             .consume(
                 &|t: &Token| matches!(t.value, TV::Identifier(_)),
@@ -225,8 +233,7 @@ impl Parser {
 
         let params = self.parameters(name.location)?;
         let body = self.body(kind)?;
-
-        Ok(Stmt::Function(Function { name, params, body }))
+        Ok(Function { name, params, body })
     }
 
     fn parameters(&mut self, location: SourceLocation) -> Result<Vec<Token>> {
@@ -281,6 +288,24 @@ impl Parser {
         self.consume(&TV::Semicolon, "Expected `;` after variable declaration")?;
 
         Ok(Stmt::Var(Var { name, initializer }))
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt> {
+        let name = self
+            .consume(
+                &|t: &Token| matches!(t.value, TV::Identifier(_)),
+                "Expected class name",
+            )?
+            .clone();
+        self.consume(&TV::LeftBrace, "Expected `{` before class body")?;
+
+        let mut methods = vec![];
+        while !self.check(&TV::RightBrace) && !self.is_at_end() {
+            methods.push(self.function("method")?);
+        }
+
+        self.consume(&TV::RightBrace, "Expected `}` after class body")?;
+        Ok(Stmt::Class(Class { name, methods }))
     }
 
     fn statement(&mut self) -> Result<Stmt> {
