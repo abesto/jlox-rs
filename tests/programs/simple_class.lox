@@ -1,0 +1,12 @@
+class Bacon {
+    eat() {
+        print "Crunch crunch crunch!";
+    }
+}
+
+Bacon().eat();
+
+var a = Bacon();
+var b = Bacon();
+a.b = b;
+a.b.eat();

@@ -413,3 +413,8 @@ repl_test!(instance_fields, {
     > "print b.x.foo;"
     "42"
 });
+
+program_test!(simple_class, {
+    "Crunch crunch crunch!"
+    "Crunch crunch crunch!"
+});

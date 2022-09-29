@@ -12,9 +12,10 @@ use crate::{
     types::{Number, SourceLocation},
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct Class {
     name: String,
+    methods: HashMap<String, Rc<RefCell<Value>>>,
 }
 
 impl std::fmt::Display for Class {
@@ -141,9 +142,11 @@ impl Value {
 
     fn get(&self, name: &Token) -> Result<Rc<RefCell<Value>>> {
         match self {
-            Value::Instance { fields, .. } => {
-                if let Some(value) = fields.get(&name.lexeme) {
-                    Ok(Rc::clone(value))
+            Value::Instance { fields, class } => {
+                if let Some(field) = fields.get(&name.lexeme) {
+                    Ok(Rc::clone(field))
+                } else if let Some(method) = class.borrow().methods.get(&name.lexeme) {
+                    Ok(Rc::clone(method))
                 } else {
                     Err(Error::UndefinedProperty {
                         object: self.clone(),
@@ -716,9 +719,24 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
             self.globals.borrow_mut().define(&stmt.name, None);
         }
 
-        let class = Rc::new(RefCell::new(Value::Class(Rc::new(RefCell::new(Class {
+        let mut methods = HashMap::new();
+        for method in &stmt.methods {
+            methods.insert(
+                method.name.lexeme.clone(),
+                Rc::new(RefCell::new(Value::Function {
+                    declaration: method.clone(),
+                    closure: OptRc::clone(&state),
+                })),
+            );
+        }
+        let methods = methods;
+
+        let class = Class {
             name: stmt.name.lexeme.clone(),
-        })))));
+            methods,
+        };
+        let class = Value::Class(Rc::new(RefCell::new(class)));
+        let class = Rc::new(RefCell::new(class));
 
         if let Some(binding) = binding {
             state.unwrap().borrow_mut().assign(binding, Some(class));

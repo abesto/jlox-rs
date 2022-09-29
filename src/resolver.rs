@@ -93,6 +93,7 @@ enum FunctionType {
     None,
     Function,
     Lambda,
+    Method,
 }
 
 impl Default for FunctionType {
@@ -446,10 +447,20 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_class(self, stmt: &crate::ast::Class, state: &mut State) -> Result {
-        combine_many_results([
+        let mut result = combine_many_results([
             self.declare(&stmt.name),
             self.define(&stmt.name),
             self.resolve_local(&stmt.name, state),
-        ])
+        ]);
+
+        for method in &stmt.methods {
+            let declaration = FunctionType::Method;
+            result = combine_results(
+                result,
+                self.resolve_function(&method.params, &method.body, declaration, state),
+            );
+        }
+
+        result
     }
 }
