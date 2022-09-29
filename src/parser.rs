@@ -71,7 +71,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// expression   = comma ;
 /// comma        = assignment ( ( "," ) assignment )* ;
 /// assignment   = "fun" lambda
-///              | IDENTIFIER "=" assignment
+///              | ( call "." )? IDENTIFIER "=" assignment
 ///              | ternary ;
 /// lambda       = "(" parameters? ")" block ;
 /// ternary      = logic_or ( "?" expression ":" expression )* ;
@@ -509,6 +509,12 @@ impl Parser {
             if let Expr::Variable(v) = expr {
                 let name = v.name;
                 Ok(Expr::Assign(Assign {
+                    name,
+                    value: Box::new(value),
+                }))
+            } else if let Expr::Get(Get { object, name }) = expr {
+                Ok(Expr::Set(Set {
+                    object,
                     name,
                     value: Box::new(value),
                 }))

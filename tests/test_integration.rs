@@ -384,8 +384,13 @@ repl_test!(print_instance, {
     "<C object>"
 });
 
-repl_test!(property_on_non_object, {
+repl_test!(property_get_on_non_object, {
     > "print 3.foo;"
+    E "Tried to access property `foo` on non-object `3` of type `Number` at 0:8"
+});
+
+repl_test!(property_set_on_non_object, {
+    > "print 3.foo = 99;"
     E "Tried to access property `foo` on non-object `3` of type `Number` at 0:8"
 });
 
@@ -394,4 +399,17 @@ repl_test!(get_missing_property, {
     > "var o = C();"
     > "print o.bar;"
     E "Undefined property `bar` on `<C object>` at 0:8"
+});
+
+repl_test!(instance_fields, {
+    > "class C {}"
+    > "var a = C(); var b = C();"
+    > "a.x = C(); b.x = a.x;"
+    "<C object>"
+    > "a.x.foo = 42;"
+    "42"
+    > "print a.x.foo;"
+    "42"
+    > "print b.x.foo;"
+    "42"
 });

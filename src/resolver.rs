@@ -361,6 +361,13 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
     fn visit_get(self, expr: &crate::ast::Get, state: &mut State) -> Result {
         expr.object.walk(self, state)
     }
+
+    fn visit_set(self, expr: &crate::ast::Set, state: &mut State) -> Result {
+        combine_results(
+            expr.value.walk(&mut *self, state),
+            expr.object.walk(self, state),
+        )
+    }
 }
 
 impl StmtVisitor<Result, &mut State> for &mut Resolver {

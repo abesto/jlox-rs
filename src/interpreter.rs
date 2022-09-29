@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, collections::HashMap};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use derivative::Derivative;
 use macros::ResolveErrorLocation;
@@ -6,14 +6,15 @@ use thiserror::Error;
 
 use crate::{
     ast::{Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor, Walkable},
-    environment::{LocalEnvironment, Variable, GlobalEnvironment},
+    environment::{GlobalEnvironment, LocalEnvironment, Variable},
+    resolver::{Binding, Bindings, CommandIndex},
     token::{Token, TokenValue},
-    types::{Number, SourceLocation}, resolver::{Bindings, CommandIndex, Binding},
+    types::{Number, SourceLocation},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct Class {
-    name: String
+    name: String,
 }
 
 impl std::fmt::Display for Class {
@@ -57,8 +58,8 @@ pub enum Value {
 
     Instance {
         class: Rc<RefCell<Class>>,
-        fields: HashMap<String, Rc<RefCell<Value>>>
-    }
+        fields: HashMap<String, Rc<RefCell<Value>>>,
+    },
 }
 
 fn always_equals<T>(_: &T, _: &T) -> bool {
@@ -79,8 +80,8 @@ impl Value {
             Self::NativeFunction { .. } => "Function".to_string(),
             Self::Function { .. } => "Function".to_string(),
             Self::Lambda { .. } => "Function".to_string(),
-            Self::Class ( .. ) => "Class".to_string(),
-            Self::Instance { class, .. } => format!("{}", class.borrow())
+            Self::Class(..) => "Class".to_string(),
+            Self::Instance { class, .. } => format!("{}", class.borrow()),
         }
     }
 
@@ -94,7 +95,7 @@ impl Value {
     fn arity(&self) -> usize {
         match self {
             Value::NativeFunction { arity, .. } => *arity,
-            Value::Function { declaration: Function { params, .. }, .. } 
+            Value::Function { declaration: Function { params, .. }, .. }
             | Value::Lambda { declaration: Lambda { params, ..}, .. } => params.len(),
             Value::Class(_) => 0,
             _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
@@ -107,9 +108,7 @@ impl Value {
         args: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>> {
         match self {
-            Value::NativeFunction { fun, .. } => {
-                Ok(Rc::new(RefCell::new(fun(interpreter, args))))
-            }
+            Value::NativeFunction { fun, .. } => Ok(Rc::new(RefCell::new(fun(interpreter, args)))),
 
             Value::Function {
                 declaration: Function { params, body, .. },
@@ -120,19 +119,19 @@ impl Value {
                 closure,
             } => LocalEnvironment::nested(OptRc::clone(closure), |function_scope| {
                 for (param, arg) in params.iter().zip(args) {
-                    function_scope.borrow_mut().assign(interpreter.binding(param).unwrap(), Some(arg))
+                    function_scope
+                        .borrow_mut()
+                        .assign(interpreter.binding(param).unwrap(), Some(arg))
                 }
                 interpreter
                     .execute_block(body, Some(function_scope))
                     .map(Option::unwrap_or_default)
             }),
 
-            Value::Class(class) => {
-                Ok(Rc::new(RefCell::new(Value::Instance {
-                    class: Rc::clone(class),
-                    fields: Default::default()
-                })))
-            },
+            Value::Class(class) => Ok(Rc::new(RefCell::new(Value::Instance {
+                class: Rc::clone(class),
+                fields: Default::default(),
+            }))),
 
             _ => panic!(
                 "Internal error: tried to invoke non-callable; this should've been caught sooner"
@@ -146,10 +145,27 @@ impl Value {
                 if let Some(value) = fields.get(&name.lexeme) {
                     Ok(Rc::clone(value))
                 } else {
-                    Err(Error::UndefinedProperty { object: self.clone(), property: name.lexeme.clone(), location: name.location })
+                    Err(Error::UndefinedProperty {
+                        object: self.clone(),
+                        property: name.lexeme.clone(),
+                        location: name.location,
+                    })
                 }
+            }
+            _ => Err(Error::PropertyOnNonObject {
+                non_object: self.clone(),
+                property: name.lexeme.clone(),
+                location: name.location,
+            }),
+        }
+    }
+
+    fn set(&mut self, name: &Token, value: &Rc<RefCell<Value>>) {
+        match self {
+            Value::Instance { fields, .. } => {
+                fields.insert(name.lexeme.clone(), Rc::clone(value));
             },
-            _ => Err(Error::PropertyOnNonObject { non_object: self.clone(), property: name.lexeme.clone(), location: name.location })
+            _ => unreachable!("Internal error: tried to call set() on non-Instance; this should've been caught sooner")
         }
     }
 }
@@ -166,8 +182,8 @@ impl std::fmt::Display for Value {
                 write!(f, "<function {}>", declaration.name.lexeme)
             }
             Self::Lambda { .. } => write!(f, "<anonymous function>"),
-            Self::Class(class)  => class.borrow().fmt(f),
-            Self::Instance{class, ..} => write!(f, "<{} object>", class.borrow().name)
+            Self::Class(class) => class.borrow().fmt(f),
+            Self::Instance { class, .. } => write!(f, "<{} object>", class.borrow().name),
         }
     }
 }
@@ -227,11 +243,15 @@ pub enum Error {
     PropertyOnNonObject {
         non_object: Value,
         property: String,
-        location: SourceLocation
+        location: SourceLocation,
     },
 
     #[error("Undefined property `{property}` on `{object}` at {location}")]
-    UndefinedProperty { object: Value, property: String, location: SourceLocation },
+    UndefinedProperty {
+        object: Value,
+        property: String,
+        location: SourceLocation,
+    },
 }
 
 pub type Result<V = Option<Rc<RefCell<Value>>>, E = Error> = std::result::Result<V, E>;
@@ -251,13 +271,16 @@ impl OptRc {
 pub struct Interpreter {
     pub command: CommandIndex,
     bindings: Bindings,
-    globals: Globals
+    globals: Globals,
 }
 
 impl Interpreter {
     #[must_use]
     pub fn new(globals: Globals) -> Self {
-        Self { globals, ..Default::default() }
+        Self {
+            globals,
+            ..Default::default()
+        }
     }
 
     pub fn update_bindings(&mut self, bindings: Bindings) {
@@ -268,11 +291,7 @@ impl Interpreter {
         self.bindings.get(&name.location)
     }
 
-    fn evaluate(
-        &mut self,
-        expr: &Expr,
-        locals: Locals
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn evaluate(&mut self, expr: &Expr, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         expr.walk(self, locals)
     }
 
@@ -311,11 +330,7 @@ impl Interpreter {
 }
 
 impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
-    fn visit_literal(
-        self,
-        x: &crate::ast::Literal,
-        _: Locals,
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_literal(self, x: &crate::ast::Literal, _: Locals) -> Result<Rc<RefCell<Value>>> {
         Ok(Rc::new(RefCell::new(match x {
             Literal::Nil => Value::Nil,
             Literal::False => Value::Boolean(false),
@@ -325,11 +340,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         })))
     }
 
-    fn visit_unary(
-        self,
-        x: &crate::ast::Unary,
-        locals: Locals
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_unary(self, x: &crate::ast::Unary, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let right = self.evaluate(&x.right, locals)?;
 
         match x.operator.value {
@@ -344,11 +355,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         }
     }
 
-    fn visit_binary(
-        self,
-        x: &crate::ast::Binary,
-        locals: Locals
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_binary(self, x: &crate::ast::Binary, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let left_rc = self.evaluate(&x.left, OptRc::clone(&locals))?;
         let left = &*left_rc.borrow();
         let right_rc = &*self.evaluate(&x.right, OptRc::clone(&locals))?;
@@ -435,11 +442,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         }
     }
 
-    fn visit_ternary(
-        self,
-        x: &crate::ast::Ternary,
-        locals: Locals,
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_ternary(self, x: &crate::ast::Ternary, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let cond = self.evaluate(&x.left, OptRc::clone(&locals))?;
         if cond.borrow().is_truthy() {
             self.evaluate(&x.mid, OptRc::clone(&locals))
@@ -465,11 +468,13 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             Some(binding) => locals.unwrap().borrow().get(binding),
             None => match self.globals.borrow().get(&x.name) {
                 Some(v) => v,
-                None => return Err(Error::UndefinedVariable {
-                    name: x.name.lexeme.clone(),
-                    location: x.name.location,
-                }),
-            }
+                None => {
+                    return Err(Error::UndefinedVariable {
+                        name: x.name.lexeme.clone(),
+                        location: x.name.location,
+                    })
+                }
+            },
         };
 
         let var = var.borrow();
@@ -482,18 +487,21 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         }
     }
 
-    fn visit_assign(
-        self,
-        x: &crate::ast::Assign,
-        locals: Locals,
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_assign(self, x: &crate::ast::Assign, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let value = self.evaluate(&x.value, OptRc::clone(&locals))?;
         match self.binding(&x.name) {
             Some(binding) => {
-                locals.unwrap().borrow_mut().assign(binding, Some(Rc::clone(&value)));
-            },
+                locals
+                    .unwrap()
+                    .borrow_mut()
+                    .assign(binding, Some(Rc::clone(&value)));
+            }
             None => {
-                if !self.globals.borrow_mut().assign(&x.name, Some(Rc::clone(&value))) {
+                if !self
+                    .globals
+                    .borrow_mut()
+                    .assign(&x.name, Some(Rc::clone(&value)))
+                {
                     return Err(Error::UndefinedVariable {
                         name: x.name.lexeme.clone(),
                         location: x.name.location,
@@ -504,11 +512,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         Ok(value)
     }
 
-    fn visit_logical(
-        self,
-        x: &crate::ast::Logical,
-        locals: Locals,
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_logical(self, x: &crate::ast::Logical, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let left = self.evaluate(&x.left, OptRc::clone(&locals))?;
         if x.operator.value == TokenValue::Or {
             if left.borrow().is_truthy() {
@@ -520,11 +524,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         self.evaluate(&x.right, locals)
     }
 
-    fn visit_call(
-        self,
-        call: &crate::ast::Call,
-        locals: Locals,
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_call(self, call: &crate::ast::Call, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let value_rc = self.evaluate(&call.callee, OptRc::clone(&locals))?;
         let value = &*value_rc.borrow();
         let callee = match value {
@@ -558,25 +558,36 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         }
     }
 
-    fn visit_lambda(
-        self,
-        x: &crate::ast::Lambda,
-        locals: Locals,
-    ) -> Result<Rc<RefCell<Value>>> {
+    fn visit_lambda(self, x: &crate::ast::Lambda, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         Ok(Rc::new(RefCell::new(Value::Lambda {
             declaration: x.clone(),
             closure: locals,
         })))
     }
 
-    fn visit_get(self,expr: &crate::ast::Get,state:Locals) -> Result<Rc<RefCell<Value>>> {
+    fn visit_get(self, expr: &crate::ast::Get, state: Locals) -> Result<Rc<RefCell<Value>>> {
         self.evaluate(&expr.object, state)?.borrow().get(&expr.name)
+    }
+
+    fn visit_set(self, expr: &crate::ast::Set, state: Locals) -> Result<Rc<RefCell<Value>>> {
+        let object_rc = self.evaluate(&expr.object, OptRc::clone(&state))?;
+        let mut object = object_rc.borrow_mut();
+
+        if !matches!(&*object, Value::Instance { .. }) {
+            return Err(Error::PropertyOnNonObject {
+                non_object: object.clone(),
+                property: expr.name.lexeme.clone(),
+                location: expr.name.location,
+            });
+        }
+
+        let value = self.evaluate(&expr.value, state)?;
+        object.set(&expr.name, &value);
+        Ok(value)
     }
 }
 
-impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
-    for &mut Interpreter
-{
+impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interpreter {
     fn visit_block(
         self,
         x: &crate::ast::Block,
@@ -595,11 +606,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
         self.evaluate(&x.expr, locals).map(Some)
     }
 
-    fn visit_if(
-        self,
-        x: &crate::ast::If,
-        locals: Locals,
-    ) -> Result<Option<Rc<RefCell<Value>>>> {
+    fn visit_if(self, x: &crate::ast::If, locals: Locals) -> Result<Option<Rc<RefCell<Value>>>> {
         if self
             .evaluate(&x.condition, OptRc::clone(&locals))?
             .borrow()
@@ -622,11 +629,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
         Ok(None)
     }
 
-    fn visit_var(
-        self,
-        x: &crate::ast::Var,
-        locals: Locals,
-    ) -> Result<Option<Rc<RefCell<Value>>>> {
+    fn visit_var(self, x: &crate::ast::Var, locals: Locals) -> Result<Option<Rc<RefCell<Value>>>> {
         let value = match &x.initializer {
             Some(expr) => Some(self.evaluate(expr, OptRc::clone(&locals))?),
             None => None,
@@ -634,7 +637,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
 
         match self.binding(&x.name) {
             None => self.globals.borrow_mut().define(&x.name.lexeme, value),
-            Some(binding) => locals.unwrap().borrow_mut().assign(binding, value)
+            Some(binding) => locals.unwrap().borrow_mut().assign(binding, value),
         }
         Ok(None)
     }
@@ -667,11 +670,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
         })
     }
 
-    fn visit_function(
-        self,
-        x: &Function,
-        locals: Locals,
-    ) -> Result<Option<Rc<RefCell<Value>>>> {
+    fn visit_function(self, x: &Function, locals: Locals) -> Result<Option<Rc<RefCell<Value>>>> {
         let fun = Value::Function {
             declaration: x.clone(),
             closure: OptRc::clone(&locals),
@@ -679,10 +678,11 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
 
         let value = Some(Rc::new(RefCell::new(fun)));
         match self.binding(&x.name) {
-            None => self.globals
+            None => self
+                .globals
                 .borrow_mut()
                 .define(x.name.lexeme.clone(), value),
-            Some(binding) => locals.unwrap().borrow_mut().assign(binding, value)
+            Some(binding) => locals.unwrap().borrow_mut().assign(binding, value),
         };
         Ok(None)
     }
@@ -704,22 +704,21 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals>
         })
     }
 
-    fn visit_class(self,stmt: &crate::ast::Class,state:Locals) -> Result<Option<Rc<RefCell<Value>>>> {
+    fn visit_class(
+        self,
+        stmt: &crate::ast::Class,
+        state: Locals,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
         let binding = self.binding(&stmt.name);
         if let Some(binding) = binding {
             state.as_ref().unwrap().borrow_mut().assign(binding, None);
         } else {
             self.globals.borrow_mut().define(&stmt.name, None);
-
         }
 
-        let class = Rc::new(RefCell::new(Value::Class(
-            Rc::new(RefCell::new(
-                Class {
-                    name: stmt.name.lexeme.clone()
-                }
-            ))
-        )));
+        let class = Rc::new(RefCell::new(Value::Class(Rc::new(RefCell::new(Class {
+            name: stmt.name.lexeme.clone(),
+        })))));
 
         if let Some(binding) = binding {
             state.unwrap().borrow_mut().assign(binding, Some(class));

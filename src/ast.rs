@@ -73,6 +73,11 @@ ast! {
             pub object: Box<Expr>,
             pub name: Token
         },
+        Set: struct {
+            pub object: Box<Expr>,
+            pub name: Token,
+            pub value: Box<Expr>
+        },
         Logical: struct {
             pub left: Box<Expr>,
             pub operator: Token,
@@ -194,6 +199,11 @@ impl std::fmt::Display for Expr {
                 write!(f, ")")
             }
             Expr::Get(Get { object, name }) => write!(f, "{}.{}", object, name),
+            Expr::Set(Set {
+                object,
+                name,
+                value,
+            }) => write!(f, "{}.{} = {}", object, name, value),
         }
     }
 }
