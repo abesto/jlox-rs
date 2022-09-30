@@ -49,13 +49,13 @@ pub enum Value {
     Function {
         declaration: Function,
         closure: Locals,
-        this: Option<Rc<RefCell<Value>>>, // Return value from constructor calls
+        force_return: Option<Rc<RefCell<Value>>>, // Return value from constructor calls
     },
 
     Lambda {
         declaration: Lambda,
         closure: Locals,
-        this: Option<Rc<RefCell<Value>>>, // Not actually used, but simplifies pattern matching
+        force_return: Option<Rc<RefCell<Value>>>, // Not actually used, but simplifies pattern matching
     },
 
     Class(Rc<RefCell<Class>>),
@@ -108,7 +108,7 @@ impl Value {
                     0
                 }
             },
-            _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
+            _ => panic!("Internal error: tried to check arity of non-callable; force_return should've been caught sooner")
         }
     }
 
@@ -123,26 +123,24 @@ impl Value {
             Value::Function {
                 declaration: Function { params, body, .. },
                 closure,
-                this,
+                force_return,
             }
             | Value::Lambda {
                 declaration: Lambda { params, body, .. },
                 closure,
-                this,
+                force_return,
             } => LocalEnvironment::nested(OptRc::clone(closure), |function_scope| {
                 for (param, arg) in params.iter().zip(args) {
                     function_scope
                         .borrow_mut()
                         .assign(interpreter.binding(param).unwrap(), Some(arg))
                 }
-                let user_return = interpreter
+                interpreter
                     .execute_block(body, Some(function_scope))
-                    .map(Option::unwrap_or_default)?;
-                if let Some(ret) = this {
-                    Ok(Rc::clone(ret))
-                } else {
-                    Ok(user_return)
-                }
+                    .map(Option::unwrap_or_default).map_err(|e| match (force_return, e) {
+                        (Some(value), Error::Return { location, .. }) => Error::Return { location, value: Rc::clone(value) },
+                        (_, e) => e
+                    })
             }),
 
             Value::Class(class) => {
@@ -160,7 +158,7 @@ impl Value {
             }
 
             _ => panic!(
-                "Internal error: tried to invoke non-callable; this should've been caught sooner"
+                "Internal error: tried to invoke non-callable; force_return should've been caught sooner"
             ),
         }
     }
@@ -170,7 +168,7 @@ impl Value {
             Value::Instance { fields, .. } => {
                 fields.insert(name.lexeme.clone(), Rc::clone(value));
             },
-            _ => unreachable!("Internal error: tried to call set() on non-Instance; this should've been caught sooner")
+            _ => unreachable!("Internal error: tried to call set() on non-Instance; force_return should've been caught sooner")
         }
     }
 }
@@ -313,7 +311,11 @@ impl Interpreter {
                 Value::Function {
                     declaration: declaration.clone(),
                     closure: Some(environment),
-                    this: Some(Rc::clone(&instance)),
+                    force_return: if declaration.name.lexeme == "init" {
+                        Some(Rc::clone(&instance))
+                    } else {
+                        None
+                    },
                 }
             }),
             _ => unreachable!(),
@@ -554,18 +556,20 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
     }
 
     fn visit_call(self, call: &crate::ast::Call, locals: Locals) -> Result<Rc<RefCell<Value>>> {
-        let value_rc = self.evaluate(&call.callee, OptRc::clone(&locals))?;
-        let value = &*value_rc.borrow();
-        let callee = match value {
-            f @ Value::NativeFunction { .. }
-            | f @ Value::Lambda { .. }
-            | f @ Value::Function { .. }
-            | f @ Value::Class(_) => Ok(f),
-            what => Err(Error::NotCallable {
-                what: what.clone(),
+        let callee_rc = self.evaluate(&call.callee, OptRc::clone(&locals))?;
+        let callee = &*callee_rc.borrow();
+        if !matches!(
+            callee,
+            Value::NativeFunction { .. }
+                | Value::Lambda { .. }
+                | Value::Function { .. }
+                | Value::Class(_)
+        ) {
+            return Err(Error::NotCallable {
+                what: callee.clone(),
                 location: call.closing_paren.location,
-            }),
-        }?;
+            });
+        }
 
         let arguments = call
             .arguments
@@ -582,7 +586,13 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         }
 
         match callee.call(self, arguments) {
-            Err(Error::Return { value, .. }) => Ok(value),
+            Err(Error::Return { value, .. }) => match callee {
+                Value::Function {
+                    force_return: Some(force_return),
+                    ..
+                } => Ok(Rc::clone(force_return)),
+                _ => Ok(value),
+            },
             x => x,
         }
     }
@@ -591,13 +601,13 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         Ok(Rc::new(RefCell::new(Value::Lambda {
             declaration: x.clone(),
             closure: locals,
-            this: None,
+            force_return: None,
         })))
     }
 
     fn visit_get(self, expr: &crate::ast::Get, state: Locals) -> Result<Rc<RefCell<Value>>> {
-        let value_rc = self.evaluate(&expr.object, state)?;
-        let value = value_rc.borrow();
+        let callee_rc = self.evaluate(&expr.object, state)?;
+        let value = callee_rc.borrow();
 
         match &*value {
             Value::Instance { fields, class } => {
@@ -605,7 +615,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
                     Ok(Rc::clone(field))
                 } else if let Some(method_def) = class.borrow().methods.get(&expr.name.lexeme) {
                     Ok(Rc::new(RefCell::new(
-                        self.bind_this(&method_def.borrow(), Rc::clone(&value_rc)),
+                        self.bind_this(&method_def.borrow(), Rc::clone(&callee_rc)),
                     )))
                 } else {
                     Err(Error::UndefinedProperty {
@@ -737,7 +747,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         let fun = Value::Function {
             declaration: x.clone(),
             closure: OptRc::clone(&locals),
-            this: None,
+            force_return: None,
         };
 
         let value = Some(Rc::new(RefCell::new(fun)));
@@ -787,7 +797,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
                 Rc::new(RefCell::new(Value::Function {
                     declaration: method.clone(),
                     closure: OptRc::clone(&state),
-                    this: None,
+                    force_return: None,
                 })),
             );
         }

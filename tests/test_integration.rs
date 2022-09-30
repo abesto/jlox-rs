@@ -436,3 +436,16 @@ program_test!(constructor_error, {
 });
 
 program_test!(constructor_returns_this, { "<Ret object>" });
+
+repl_test!(constructor_return_value, {
+    > "class C { init() { return 1; } }"
+    E "Return from initializer of `C` at 0:19"
+    E "Variable resolution failed, see errors above."
+});
+
+program_test!(constructor_returns_this_early, {
+    "<C object>"
+    "5"
+    "<C object>"
+    "7"
+});

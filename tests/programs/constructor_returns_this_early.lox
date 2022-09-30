@@ -1,0 +1,12 @@
+class C {
+    init(x) {
+        this.x = x;
+        return;
+        this.x = 200;
+    }
+}
+
+print C(3);
+print C(5).x;
+print C(6).init(7);
+print C(6).init(7).x;

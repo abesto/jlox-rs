@@ -46,6 +46,12 @@ pub enum Error {
 
     #[error("`this` outside of a class at {location}")]
     ThisOutsideClass { location: SourceLocation },
+
+    #[error("Return from initializer of `{class}` at {location}")]
+    ReturnFromInitializer {
+        class: String,
+        location: SourceLocation,
+    },
 }
 
 type Output = ();
@@ -97,6 +103,7 @@ enum FunctionType {
     Function,
     Lambda,
     Method,
+    Initializer(String),
 }
 
 impl Default for FunctionType {
@@ -443,7 +450,14 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
                 location: stmt.keyword.location,
             }]);
         }
+
         if let Some(expr) = &stmt.value {
+            if let FunctionType::Initializer(class) = &self.current_function {
+                return Err(vec![Error::ReturnFromInitializer {
+                    class: class.clone(),
+                    location: stmt.keyword.location,
+                }]);
+            }
             expr.walk(self, state)
         } else {
             Ok(())
@@ -505,7 +519,11 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
         }
 
         for method in &stmt.methods {
-            let declaration = FunctionType::Method;
+            let declaration = if method.name.lexeme == "init" {
+                FunctionType::Initializer(stmt.name.lexeme.clone())
+            } else {
+                FunctionType::Method
+            };
             result = combine_results(
                 result,
                 self.resolve_function(&method.params, &method.body, declaration, state),
