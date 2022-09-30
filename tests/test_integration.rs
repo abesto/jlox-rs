@@ -422,3 +422,9 @@ program_test!(simple_class, {
 program_test!(simple_method, { "Hi, I'm Wally" });
 
 program_test!(callback_from_method, { "one two" });
+
+repl_test!(this_outside_class, {
+    > "print this;"
+    E "`this` outside of a class at 0:6"
+    E "Variable resolution failed, see errors above."
+});

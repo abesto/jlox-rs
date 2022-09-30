@@ -43,6 +43,9 @@ pub enum Error {
         name: String,
         location: SourceLocation,
     },
+
+    #[error("`this` outside of a class at {location}")]
+    ThisOutsideClass { location: SourceLocation },
 }
 
 type Output = ();
@@ -102,6 +105,20 @@ impl Default for FunctionType {
     }
 }
 
+/// Are we inside a class?
+/// Used to detect `this`s outside classes.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ClassType {
+    None,
+    Class,
+}
+
+impl Default for ClassType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum VariableState {
     Declared,
@@ -151,6 +168,7 @@ pub struct Resolver {
     config: ResolverConfig,
     scopes: Vec<Scope>,
     current_function: FunctionType,
+    current_class: ClassType,
 }
 
 impl Resolver {
@@ -371,7 +389,13 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_this(self, expr: &crate::ast::This, state: &mut State) -> Result {
-        self.resolve_local(&expr.keyword, state)
+        if self.current_class == ClassType::None {
+            Err(vec![Error::ThisOutsideClass {
+                location: expr.keyword.location,
+            }])
+        } else {
+            self.resolve_local(&expr.keyword, state)
+        }
     }
 }
 
@@ -451,6 +475,8 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_class(self, stmt: &crate::ast::Class, state: &mut State) -> Result {
+        let enclosing_class = std::mem::replace(&mut self.current_class, ClassType::Class);
+
         let mut result = combine_many_results([
             self.declare(&stmt.name),
             self.define(&stmt.name),
@@ -486,6 +512,8 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             );
         }
 
-        combine_results(result, self.end_scope())
+        result = combine_results(result, self.end_scope());
+        self.current_class = enclosing_class;
+        result
     }
 }
