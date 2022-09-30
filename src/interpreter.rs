@@ -12,10 +12,11 @@ use crate::{
     types::{Number, SourceLocation},
 };
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Class {
     name: String,
     methods: HashMap<String, Rc<RefCell<Value>>>,
+    left_brace: Token,
 }
 
 impl std::fmt::Display for Class {
@@ -137,29 +138,6 @@ impl Value {
             _ => panic!(
                 "Internal error: tried to invoke non-callable; this should've been caught sooner"
             ),
-        }
-    }
-
-    fn get(&self, name: &Token) -> Result<Rc<RefCell<Value>>> {
-        match self {
-            Value::Instance { fields, class } => {
-                if let Some(field) = fields.get(&name.lexeme) {
-                    Ok(Rc::clone(field))
-                } else if let Some(method) = class.borrow().methods.get(&name.lexeme) {
-                    Ok(Rc::clone(method))
-                } else {
-                    Err(Error::UndefinedProperty {
-                        object: self.clone(),
-                        property: name.lexeme.clone(),
-                        location: name.location,
-                    })
-                }
-            }
-            _ => Err(Error::PropertyOnNonObject {
-                non_object: self.clone(),
-                property: name.lexeme.clone(),
-                location: name.location,
-            }),
         }
     }
 
@@ -569,7 +547,45 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
     }
 
     fn visit_get(self, expr: &crate::ast::Get, state: Locals) -> Result<Rc<RefCell<Value>>> {
-        self.evaluate(&expr.object, state)?.borrow().get(&expr.name)
+        let value_rc = self.evaluate(&expr.object, state)?;
+        let value = value_rc.borrow();
+
+        match &*value {
+            Value::Instance { fields, class } => {
+                if let Some(field) = fields.get(&expr.name.lexeme) {
+                    Ok(Rc::clone(field))
+                } else if let Some(method_def) = class.borrow().methods.get(&expr.name.lexeme) {
+                    match &*method_def.borrow() {
+                        Value::Function {
+                            declaration,
+                            closure,
+                        } => LocalEnvironment::nested(OptRc::clone(closure), |environment| {
+                            environment.borrow_mut().assign(
+                                self.binding(&class.borrow().left_brace).unwrap(),
+                                Some(Rc::clone(&value_rc)),
+                            );
+                            let method = Value::Function {
+                                declaration: declaration.clone(),
+                                closure: Some(environment),
+                            };
+                            Ok(Rc::new(RefCell::new(method)))
+                        }),
+                        _ => unreachable!(),
+                    }
+                } else {
+                    Err(Error::UndefinedProperty {
+                        object: value.clone(),
+                        property: expr.name.lexeme.clone(),
+                        location: expr.name.location,
+                    })
+                }
+            }
+            _ => Err(Error::PropertyOnNonObject {
+                non_object: value.clone(),
+                property: expr.name.lexeme.clone(),
+                location: expr.name.location,
+            }),
+        }
     }
 
     fn visit_set(self, expr: &crate::ast::Set, state: Locals) -> Result<Rc<RefCell<Value>>> {
@@ -587,6 +603,15 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         let value = self.evaluate(&expr.value, state)?;
         object.set(&expr.name, &value);
         Ok(value)
+    }
+
+    fn visit_this(self, expr: &crate::ast::This, state: Locals) -> Result<Rc<RefCell<Value>>> {
+        self.visit_variable(
+            &crate::ast::Variable {
+                name: expr.keyword.clone(),
+            },
+            state,
+        )
     }
 }
 
@@ -734,6 +759,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         let class = Class {
             name: stmt.name.lexeme.clone(),
             methods,
+            left_brace: stmt.left_brace.clone(),
         };
         let class = Value::Class(Rc::new(RefCell::new(class)));
         let class = Rc::new(RefCell::new(class));

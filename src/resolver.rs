@@ -369,6 +369,10 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
             expr.object.walk(self, state),
         )
     }
+
+    fn visit_this(self, expr: &crate::ast::This, state: &mut State) -> Result {
+        self.resolve_local(&expr.keyword, state)
+    }
 }
 
 impl StmtVisitor<Result, &mut State> for &mut Resolver {
@@ -453,6 +457,27 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             self.resolve_local(&stmt.name, state),
         ]);
 
+        self.begin_scope();
+        {
+            let scope = self.scopes.last_mut().unwrap();
+            let index_in_scope = scope.reserve();
+            scope.vars.insert(
+                "this".to_string(),
+                VariableData {
+                    state: VariableState::Used,
+                    declared_at: stmt.left_brace.location,
+                    index_in_scope,
+                },
+            );
+            state.insert(
+                stmt.left_brace.location,
+                Binding {
+                    scopes_up: 0,
+                    index_in_scope,
+                },
+            );
+        }
+
         for method in &stmt.methods {
             let declaration = FunctionType::Method;
             result = combine_results(
@@ -461,6 +486,6 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             );
         }
 
-        result
+        combine_results(result, self.end_scope())
     }
 }

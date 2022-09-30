@@ -288,7 +288,9 @@ impl Parser {
 
     fn class_declaration(&mut self) -> Result<Stmt> {
         let name = self.consume_identifier("Expected class name")?.clone();
-        self.consume(&TV::LeftBrace, "Expected `{` before class body")?;
+        let left_brace = self
+            .consume(&TV::LeftBrace, "Expected `{` before class body")?
+            .clone();
 
         let mut methods = vec![];
         while !self.check(&TV::RightBrace) && !self.is_at_end() {
@@ -296,7 +298,11 @@ impl Parser {
         }
 
         self.consume(&TV::RightBrace, "Expected `}` after class body")?;
-        Ok(Stmt::Class(Class { name, methods }))
+        Ok(Stmt::Class(Class {
+            name,
+            methods,
+            left_brace,
+        }))
     }
 
     fn statement(&mut self) -> Result<Stmt> {
@@ -699,6 +705,9 @@ impl Parser {
             }
             TV::Identifier(_) => Ok(Expr::Variable(Variable {
                 name: self.previous().clone(),
+            })),
+            TV::This => Ok(Expr::This(This {
+                keyword: self.previous().clone(),
             })),
             t => Err(Error::Bad {
                 msg: format!("Expected expression, found: `{}`", t),

@@ -78,6 +78,9 @@ ast! {
             pub name: Token,
             pub value: Box<Expr>
         },
+        This: struct {
+            pub keyword: Token
+        },
         Logical: struct {
             pub left: Box<Expr>,
             pub operator: Token,
@@ -114,6 +117,7 @@ ast! {
         },
         Class: struct {
             pub name: Token,
+            pub left_brace: Token,  // Used as the "definition" point of `this`
             pub methods: Vec<Function>,
         },
         Function: struct {
@@ -204,6 +208,7 @@ impl std::fmt::Display for Expr {
                 name,
                 value,
             }) => write!(f, "{}.{} = {}", object, name, value),
+            Expr::This(_) => write!(f, "this"),
         }
     }
 }

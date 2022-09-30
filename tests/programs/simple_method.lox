@@ -1,0 +1,13 @@
+class Greeter {
+    hello() {
+        print "Hi, I'm " + this.name;
+    }
+
+    setName(name) {
+        this.name = name;
+    }
+}
+
+var g = Greeter();
+g.setName("Wally");
+g.hello();

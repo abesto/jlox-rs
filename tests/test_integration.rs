@@ -418,3 +418,7 @@ program_test!(simple_class, {
     "Crunch crunch crunch!"
     "Crunch crunch crunch!"
 });
+
+program_test!(simple_method, { "Hi, I'm Wally" });
+
+program_test!(callback_from_method, { "one two" });

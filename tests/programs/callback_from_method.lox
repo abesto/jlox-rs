@@ -1,0 +1,13 @@
+class Thing {
+    getCallback() {
+        fun localFunction(arg) {
+            print this.field + " " + arg;
+        }
+        return localFunction;
+    }
+}
+
+var thing = Thing();
+var callback = thing.getCallback();
+thing.field = "one";
+callback("two");
