@@ -99,7 +99,13 @@ impl Value {
             Value::NativeFunction { arity, .. } => *arity,
             Value::Function { declaration: Function { params, .. }, .. }
             | Value::Lambda { declaration: Lambda { params, ..}, .. } => params.len(),
-            Value::Class(_) => 0,
+            Value::Class(class) => {
+                if let Some(init) = class.borrow().methods.get("init") {
+                    init.borrow().arity()
+                } else {
+                    0
+                }
+            },
             _ => panic!("Internal error: tried to check arity of non-callable; this should've been caught sooner")
         }
     }
@@ -130,10 +136,19 @@ impl Value {
                     .map(Option::unwrap_or_default)
             }),
 
-            Value::Class(class) => Ok(Rc::new(RefCell::new(Value::Instance {
-                class: Rc::clone(class),
-                fields: Default::default(),
-            }))),
+            Value::Class(class) => {
+                let instance = Value::Instance {
+                    class: Rc::clone(class),
+                    fields: Default::default(),
+                };
+                let instance = Rc::new(RefCell::new(instance));
+                if let Some(init) = class.borrow().methods.get("init") {
+                    interpreter
+                        .bind_this(&init.borrow(), Rc::clone(&instance))
+                        .call(interpreter, args)?;
+                }
+                Ok(instance)
+            }
 
             _ => panic!(
                 "Internal error: tried to invoke non-callable; this should've been caught sooner"
@@ -270,6 +285,28 @@ impl Interpreter {
 
     pub fn binding(&self, name: &Token) -> Option<&Binding> {
         self.bindings.get(&name.location)
+    }
+
+    fn bind_this(&self, method: &Value, instance: Rc<RefCell<Value>>) -> Value {
+        match (method, &*instance.borrow()) {
+            (
+                Value::Function {
+                    declaration,
+                    closure,
+                },
+                Value::Instance { class, .. },
+            ) => LocalEnvironment::nested(OptRc::clone(closure), |environment| {
+                environment.borrow_mut().assign(
+                    self.binding(&class.borrow().left_brace).unwrap(),
+                    Some(Rc::clone(&instance)),
+                );
+                Value::Function {
+                    declaration: declaration.clone(),
+                    closure: Some(environment),
+                }
+            }),
+            _ => unreachable!(),
+        }
     }
 
     fn evaluate(&mut self, expr: &Expr, locals: Locals) -> Result<Rc<RefCell<Value>>> {
@@ -555,23 +592,9 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
                 if let Some(field) = fields.get(&expr.name.lexeme) {
                     Ok(Rc::clone(field))
                 } else if let Some(method_def) = class.borrow().methods.get(&expr.name.lexeme) {
-                    match &*method_def.borrow() {
-                        Value::Function {
-                            declaration,
-                            closure,
-                        } => LocalEnvironment::nested(OptRc::clone(closure), |environment| {
-                            environment.borrow_mut().assign(
-                                self.binding(&class.borrow().left_brace).unwrap(),
-                                Some(Rc::clone(&value_rc)),
-                            );
-                            let method = Value::Function {
-                                declaration: declaration.clone(),
-                                closure: Some(environment),
-                            };
-                            Ok(Rc::new(RefCell::new(method)))
-                        }),
-                        _ => unreachable!(),
-                    }
+                    Ok(Rc::new(RefCell::new(
+                        self.bind_this(&method_def.borrow(), Rc::clone(&value_rc)),
+                    )))
                 } else {
                     Err(Error::UndefinedProperty {
                         object: value.clone(),

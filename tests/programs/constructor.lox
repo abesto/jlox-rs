@@ -1,0 +1,12 @@
+class Plus {
+    init(n) {
+        this.n = n;
+    }
+
+    add(n) {
+        return n + this.n;
+    }
+}
+
+var two = Plus(2);
+print two.add(3);

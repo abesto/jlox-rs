@@ -428,3 +428,5 @@ repl_test!(this_outside_class, {
     E "`this` outside of a class at 0:6"
     E "Variable resolution failed, see errors above."
 });
+
+program_test!(constructor, { "5" });
