@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 use crate::environment::GlobalEnvironment;
-use crate::interpreter::{Interpreter, Value};
+use crate::interpreter::{Interpreter, NativeFunction, Value};
 use crate::parser::Parser;
 use crate::resolver::{Resolver, ResolverConfig};
 use crate::scanner::Scanner;
@@ -44,27 +44,31 @@ impl Lox {
         let mut env = GlobalEnvironment::new();
         env.define(
             "clock",
-            Some(Rc::new(RefCell::new(Value::NativeFunction {
-                name: "clock".to_string(),
-                arity: 0,
-                fun: |_, _| {
-                    Value::Number(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs_f64(),
-                    )
+            Some(Rc::new(RefCell::new(Value::NativeFunction(
+                NativeFunction {
+                    name: "clock".to_string(),
+                    arity: 0,
+                    fun: |_, _| {
+                        Value::Number(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs_f64(),
+                        )
+                    },
                 },
-            }))),
+            )))),
         );
 
         env.define(
             "type",
-            Some(Rc::new(RefCell::new(Value::NativeFunction {
-                name: "type".to_string(),
-                arity: 1,
-                fun: |_, args| Value::String(args[0].borrow().type_of()),
-            }))),
+            Some(Rc::new(RefCell::new(Value::NativeFunction(
+                NativeFunction {
+                    name: "type".to_string(),
+                    arity: 1,
+                    fun: |_, args| Value::String(args[0].borrow().type_of()),
+                },
+            )))),
         );
 
         Rc::new(RefCell::new(env))

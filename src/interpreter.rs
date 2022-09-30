@@ -5,23 +5,204 @@ use macros::ResolveErrorLocation;
 use thiserror::Error;
 
 use crate::{
-    ast::{Expr, ExprVisitor, Function, Lambda, Literal, Stmt, StmtVisitor, Walkable},
+    ast::{Expr, ExprVisitor, Literal, Stmt, StmtVisitor, Walkable},
     environment::{GlobalEnvironment, LocalEnvironment, Variable},
     resolver::{Binding, Bindings, CommandIndex},
     token::{Token, TokenValue},
     types::{Number, SourceLocation},
 };
 
+trait Callable {
+    fn arity(&self) -> usize;
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>>;
+}
+
+fn call_common(
+    interpreter: &mut Interpreter,
+    args: Vec<Rc<RefCell<Value>>>,
+    scope: Option<Rc<RefCell<LocalEnvironment>>>,
+    params: &[Token],
+    body: &[Stmt],
+) -> Result<Rc<RefCell<Value>>, Error> {
+    LocalEnvironment::nested(OptRc::clone(&scope), |function_scope| {
+        for (param, arg) in params.iter().zip(args) {
+            function_scope
+                .borrow_mut()
+                .assign(interpreter.binding(param).unwrap(), Some(arg))
+        }
+        interpreter
+            .execute_block(body, Some(function_scope))
+            .map(Option::unwrap_or_default)
+    })
+}
+
+impl Callable for crate::ast::Function {
+    fn arity(&self) -> usize {
+        self.params.len()
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>> {
+        call_common(interpreter, args, scope, &self.params, &self.body)
+    }
+}
+
+impl Callable for crate::ast::Lambda {
+    fn arity(&self) -> usize {
+        self.params.len()
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>> {
+        call_common(interpreter, args, scope, &self.params, &self.body)
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Class {
     name: String,
-    methods: HashMap<String, Rc<RefCell<Value>>>,
+    methods: HashMap<String, Rc<RefCell<Function>>>,
     left_brace: Token,
 }
 
 impl std::fmt::Display for Class {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<class '{}'>", self.name)
+    }
+}
+
+impl Callable for Rc<RefCell<Class>> {
+    fn arity(&self) -> usize {
+        if let Some(init) = self.borrow().methods.get("init") {
+            init.borrow().arity()
+        } else {
+            0
+        }
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>> {
+        let instance = Instance {
+            class: Rc::clone(self),
+            fields: Default::default(),
+        };
+        let instance = Rc::new(RefCell::new(Value::Instance(instance)));
+        if let Some(init) = self.borrow().methods.get("init") {
+            interpreter
+                .bind_this(&init.borrow(), Rc::clone(&instance))
+                .call(interpreter, args, scope)?;
+        }
+        Ok(instance)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Instance {
+    class: Rc<RefCell<Class>>,
+    fields: HashMap<String, Rc<RefCell<Value>>>,
+}
+
+impl Instance {
+    fn set(&mut self, name: &Token, value: &Rc<RefCell<Value>>) {
+        self.fields.insert(name.lexeme.clone(), Rc::clone(value));
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug, PartialEq, Clone)]
+pub struct NativeFunction {
+    pub name: String,
+    pub arity: usize,
+    #[derivative(
+            Debug = "ignore",
+            // Treat the implementation as always equal; we discriminate built-in functions by name
+            PartialEq(compare_with = "always_equals"),
+        )]
+    #[allow(clippy::type_complexity)]
+    pub fun: fn(&mut Interpreter, Vec<Rc<RefCell<Value>>>) -> Value,
+}
+
+impl Callable for NativeFunction {
+    fn arity(&self) -> usize {
+        self.arity
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        _scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>> {
+        Ok(Rc::new(RefCell::new((self.fun)(interpreter, args))))
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Function {
+    declaration: crate::ast::Function,
+    closure: Locals,
+    force_return: Option<Rc<RefCell<Value>>>, // Return value from constructor calls
+}
+
+impl Callable for Function {
+    fn arity(&self) -> usize {
+        self.declaration.params.len()
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        _scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>> {
+        self.declaration
+            .call(interpreter, args, OptRc::clone(&self.closure))
+            .map_err(|e| match (&self.force_return, e) {
+                (Some(value), Error::Return { location, .. }) => Error::Return {
+                    location,
+                    value: Rc::clone(value),
+                },
+                (_, e) => e,
+            })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Lambda {
+    declaration: crate::ast::Lambda,
+    closure: Locals,
+}
+
+impl Callable for Lambda {
+    fn arity(&self) -> usize {
+        self.declaration.params.len()
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        args: Vec<Rc<RefCell<Value>>>,
+        _scope: Locals,
+    ) -> Result<Rc<RefCell<Value>>> {
+        self.declaration
+            .call(interpreter, args, OptRc::clone(&self.closure))
     }
 }
 
@@ -34,36 +215,12 @@ pub enum Value {
     Number(Number),
     String(String),
 
-    NativeFunction {
-        name: String,
-        arity: usize,
-        #[derivative(
-            Debug = "ignore",
-            // Treat the implementation as always equal; we discriminate built-in functions by name
-            PartialEq(compare_with = "always_equals"),
-        )]
-        #[allow(clippy::type_complexity)]
-        fun: fn(&mut Interpreter, Vec<Rc<RefCell<Value>>>) -> Value,
-    },
-
-    Function {
-        declaration: Function,
-        closure: Locals,
-        force_return: Option<Rc<RefCell<Value>>>, // Return value from constructor calls
-    },
-
-    Lambda {
-        declaration: Lambda,
-        closure: Locals,
-        force_return: Option<Rc<RefCell<Value>>>, // Not actually used, but simplifies pattern matching
-    },
+    NativeFunction(NativeFunction),
+    Function(Function),
+    Lambda(Lambda),
 
     Class(Rc<RefCell<Class>>),
-
-    Instance {
-        class: Rc<RefCell<Class>>,
-        fields: HashMap<String, Rc<RefCell<Value>>>,
-    },
+    Instance(Instance),
 }
 
 fn always_equals<T>(_: &T, _: &T) -> bool {
@@ -85,7 +242,7 @@ impl Value {
             Self::Function { .. } => "Function".to_string(),
             Self::Lambda { .. } => "Function".to_string(),
             Self::Class(..) => "Class".to_string(),
-            Self::Instance { class, .. } => format!("{}", class.borrow()),
+            Self::Instance(Instance { class, .. }) => format!("{}", class.borrow()),
         }
     }
 
@@ -93,82 +250,6 @@ impl Value {
         match self {
             Self::String(s) => format!("{:?}", s),
             v => format!("{}", v),
-        }
-    }
-
-    fn arity(&self) -> usize {
-        match self {
-            Value::NativeFunction { arity, .. } => *arity,
-            Value::Function { declaration: Function { params, .. }, .. }
-            | Value::Lambda { declaration: Lambda { params, ..}, .. } => params.len(),
-            Value::Class(class) => {
-                if let Some(init) = class.borrow().methods.get("init") {
-                    init.borrow().arity()
-                } else {
-                    0
-                }
-            },
-            _ => panic!("Internal error: tried to check arity of non-callable; force_return should've been caught sooner")
-        }
-    }
-
-    fn call(
-        &self,
-        interpreter: &mut Interpreter,
-        args: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Rc<RefCell<Value>>> {
-        match self {
-            Value::NativeFunction { fun, .. } => Ok(Rc::new(RefCell::new(fun(interpreter, args)))),
-
-            Value::Function {
-                declaration: Function { params, body, .. },
-                closure,
-                force_return,
-            }
-            | Value::Lambda {
-                declaration: Lambda { params, body, .. },
-                closure,
-                force_return,
-            } => LocalEnvironment::nested(OptRc::clone(closure), |function_scope| {
-                for (param, arg) in params.iter().zip(args) {
-                    function_scope
-                        .borrow_mut()
-                        .assign(interpreter.binding(param).unwrap(), Some(arg))
-                }
-                interpreter
-                    .execute_block(body, Some(function_scope))
-                    .map(Option::unwrap_or_default).map_err(|e| match (force_return, e) {
-                        (Some(value), Error::Return { location, .. }) => Error::Return { location, value: Rc::clone(value) },
-                        (_, e) => e
-                    })
-            }),
-
-            Value::Class(class) => {
-                let instance = Value::Instance {
-                    class: Rc::clone(class),
-                    fields: Default::default(),
-                };
-                let instance = Rc::new(RefCell::new(instance));
-                if let Some(init) = class.borrow().methods.get("init") {
-                    interpreter
-                        .bind_this(&init.borrow(), Rc::clone(&instance))
-                        .call(interpreter, args)?;
-                }
-                Ok(instance)
-            }
-
-            _ => panic!(
-                "Internal error: tried to invoke non-callable; force_return should've been caught sooner"
-            ),
-        }
-    }
-
-    fn set(&mut self, name: &Token, value: &Rc<RefCell<Value>>) {
-        match self {
-            Value::Instance { fields, .. } => {
-                fields.insert(name.lexeme.clone(), Rc::clone(value));
-            },
-            _ => unreachable!("Internal error: tried to call set() on non-Instance; force_return should've been caught sooner")
         }
     }
 }
@@ -180,13 +261,13 @@ impl std::fmt::Display for Value {
             Self::Boolean(b) => b.fmt(f),
             Self::Number(n) => n.fmt(f),
             Self::String(s) => s.fmt(f),
-            Self::NativeFunction { name, .. } => write!(f, "<function {}>", name),
-            Self::Function { declaration, .. } => {
+            Self::NativeFunction(NativeFunction { name, .. }) => write!(f, "<function {}>", name),
+            Self::Function(Function { declaration, .. }) => {
                 write!(f, "<function {}>", declaration.name.lexeme)
             }
             Self::Lambda { .. } => write!(f, "<anonymous function>"),
             Self::Class(class) => class.borrow().fmt(f),
-            Self::Instance { class, .. } => write!(f, "<{} object>", class.borrow().name),
+            Self::Instance(Instance { class, .. }) => write!(f, "<{} object>", class.borrow().name),
         }
     }
 }
@@ -294,31 +375,25 @@ impl Interpreter {
         self.bindings.get(&name.location)
     }
 
-    fn bind_this(&self, method: &Value, instance: Rc<RefCell<Value>>) -> Value {
-        match (method, &*instance.borrow()) {
-            (
-                Value::Function {
-                    declaration,
-                    closure,
-                    ..
-                },
-                Value::Instance { class, .. },
-            ) => LocalEnvironment::nested(OptRc::clone(closure), |environment| {
+    fn bind_this(&self, method: &Function, instance: Rc<RefCell<Value>>) -> Function {
+        if let Value::Instance(Instance { class, .. }) = &*instance.borrow() {
+            LocalEnvironment::nested(OptRc::clone(&method.closure), |environment| {
                 environment.borrow_mut().assign(
                     self.binding(&class.borrow().left_brace).unwrap(),
                     Some(Rc::clone(&instance)),
                 );
-                Value::Function {
-                    declaration: declaration.clone(),
+                Function {
+                    declaration: method.declaration.clone(),
                     closure: Some(environment),
-                    force_return: if declaration.name.lexeme == "init" {
+                    force_return: if method.declaration.name.lexeme == "init" {
                         Some(Rc::clone(&instance))
                     } else {
                         None
                     },
                 }
-            }),
-            _ => unreachable!(),
+            })
+        } else {
+            unreachable!()
         }
     }
 
@@ -558,18 +633,19 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
     fn visit_call(self, call: &crate::ast::Call, locals: Locals) -> Result<Rc<RefCell<Value>>> {
         let callee_rc = self.evaluate(&call.callee, OptRc::clone(&locals))?;
         let callee = &*callee_rc.borrow();
-        if !matches!(
-            callee,
-            Value::NativeFunction { .. }
-                | Value::Lambda { .. }
-                | Value::Function { .. }
-                | Value::Class(_)
-        ) {
-            return Err(Error::NotCallable {
-                what: callee.clone(),
-                location: call.closing_paren.location,
-            });
-        }
+
+        let callable: Box<&dyn Callable> = match callee {
+            Value::NativeFunction(f) => Box::new(f),
+            Value::Function(f) => Box::new(f),
+            Value::Lambda(f) => Box::new(f),
+            Value::Class(c) => Box::new(c),
+            _ => {
+                return Err(Error::NotCallable {
+                    what: callee.clone(),
+                    location: call.closing_paren.location,
+                });
+            }
+        };
 
         let arguments = call
             .arguments
@@ -577,56 +653,50 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             .map(|arg| self.evaluate(arg, OptRc::clone(&locals)))
             .collect::<Result<Vec<_>>>()?;
 
-        if arguments.len() != callee.arity() {
+        if arguments.len() != callable.arity() {
             return Err(Error::WrongArity {
-                expected: callee.arity(),
+                expected: callable.arity(),
                 actual: arguments.len(),
                 location: call.closing_paren.location,
             });
         }
 
-        match callee.call(self, arguments) {
-            Err(Error::Return { value, .. }) => match callee {
-                Value::Function {
-                    force_return: Some(force_return),
-                    ..
-                } => Ok(Rc::clone(force_return)),
-                _ => Ok(value),
-            },
+        match callable.call(self, arguments, locals) {
+            Err(Error::Return { value, .. }) => Ok(value),
             x => x,
         }
     }
 
     fn visit_lambda(self, x: &crate::ast::Lambda, locals: Locals) -> Result<Rc<RefCell<Value>>> {
-        Ok(Rc::new(RefCell::new(Value::Lambda {
+        Ok(Rc::new(RefCell::new(Value::Lambda(Lambda {
             declaration: x.clone(),
             closure: locals,
-            force_return: None,
-        })))
+        }))))
     }
 
     fn visit_get(self, expr: &crate::ast::Get, state: Locals) -> Result<Rc<RefCell<Value>>> {
-        let callee_rc = self.evaluate(&expr.object, state)?;
-        let value = callee_rc.borrow();
+        let instance_rc = self.evaluate(&expr.object, state)?;
+        let instance = instance_rc.borrow();
 
-        match &*value {
-            Value::Instance { fields, class } => {
+        match &*instance {
+            Value::Instance(Instance { fields, class }) => {
                 if let Some(field) = fields.get(&expr.name.lexeme) {
                     Ok(Rc::clone(field))
                 } else if let Some(method_def) = class.borrow().methods.get(&expr.name.lexeme) {
-                    Ok(Rc::new(RefCell::new(
-                        self.bind_this(&method_def.borrow(), Rc::clone(&callee_rc)),
-                    )))
+                    Ok(Rc::new(RefCell::new(Value::Function(self.bind_this(
+                        &method_def.borrow(),
+                        Rc::clone(&instance_rc),
+                    )))))
                 } else {
                     Err(Error::UndefinedProperty {
-                        object: value.clone(),
+                        object: instance.clone(),
                         property: expr.name.lexeme.clone(),
                         location: expr.name.location,
                     })
                 }
             }
             _ => Err(Error::PropertyOnNonObject {
-                non_object: value.clone(),
+                non_object: instance.clone(),
                 property: expr.name.lexeme.clone(),
                 location: expr.name.location,
             }),
@@ -637,17 +707,18 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         let object_rc = self.evaluate(&expr.object, OptRc::clone(&state))?;
         let mut object = object_rc.borrow_mut();
 
-        if !matches!(&*object, Value::Instance { .. }) {
-            return Err(Error::PropertyOnNonObject {
+        match &mut *object {
+            Value::Instance(instance) => {
+                let value = self.evaluate(&expr.value, state)?;
+                instance.set(&expr.name, &value);
+                Ok(value)
+            }
+            _ => Err(Error::PropertyOnNonObject {
                 non_object: object.clone(),
                 property: expr.name.lexeme.clone(),
                 location: expr.name.location,
-            });
+            }),
         }
-
-        let value = self.evaluate(&expr.value, state)?;
-        object.set(&expr.name, &value);
-        Ok(value)
     }
 
     fn visit_this(self, expr: &crate::ast::This, state: Locals) -> Result<Rc<RefCell<Value>>> {
@@ -743,12 +814,16 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         })
     }
 
-    fn visit_function(self, x: &Function, locals: Locals) -> Result<Option<Rc<RefCell<Value>>>> {
-        let fun = Value::Function {
+    fn visit_function(
+        self,
+        x: &crate::ast::Function,
+        locals: Locals,
+    ) -> Result<Option<Rc<RefCell<Value>>>> {
+        let fun = Value::Function(Function {
             declaration: x.clone(),
             closure: OptRc::clone(&locals),
             force_return: None,
-        };
+        });
 
         let value = Some(Rc::new(RefCell::new(fun)));
         match self.binding(&x.name) {
@@ -794,7 +869,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         for method in &stmt.methods {
             methods.insert(
                 method.name.lexeme.clone(),
-                Rc::new(RefCell::new(Value::Function {
+                Rc::new(RefCell::new(Function {
                     declaration: method.clone(),
                     closure: OptRc::clone(&state),
                     force_return: None,
