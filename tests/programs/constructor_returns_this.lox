@@ -1,0 +1,8 @@
+class Ret {
+    init() {
+        this.x = 12;
+    }
+}
+
+var o = Ret();
+print o.init();

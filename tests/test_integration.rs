@@ -430,3 +430,9 @@ repl_test!(this_outside_class, {
 });
 
 program_test!(constructor, { "5" });
+
+program_test!(constructor_error, {
+    E "Division by zero at 2:19"
+});
+
+program_test!(constructor_returns_this, { "<Ret object>" });

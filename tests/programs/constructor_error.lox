@@ -1,0 +1,7 @@
+class Err {
+    init() {
+        this.x = 3 / 0;
+    }
+}
+
+Err();

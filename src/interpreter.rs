@@ -49,11 +49,13 @@ pub enum Value {
     Function {
         declaration: Function,
         closure: Locals,
+        this: Option<Rc<RefCell<Value>>>, // Return value from constructor calls
     },
 
     Lambda {
         declaration: Lambda,
         closure: Locals,
+        this: Option<Rc<RefCell<Value>>>, // Not actually used, but simplifies pattern matching
     },
 
     Class(Rc<RefCell<Class>>),
@@ -121,19 +123,26 @@ impl Value {
             Value::Function {
                 declaration: Function { params, body, .. },
                 closure,
+                this,
             }
             | Value::Lambda {
                 declaration: Lambda { params, body, .. },
                 closure,
+                this,
             } => LocalEnvironment::nested(OptRc::clone(closure), |function_scope| {
                 for (param, arg) in params.iter().zip(args) {
                     function_scope
                         .borrow_mut()
                         .assign(interpreter.binding(param).unwrap(), Some(arg))
                 }
-                interpreter
+                let user_return = interpreter
                     .execute_block(body, Some(function_scope))
-                    .map(Option::unwrap_or_default)
+                    .map(Option::unwrap_or_default)?;
+                if let Some(ret) = this {
+                    Ok(Rc::clone(ret))
+                } else {
+                    Ok(user_return)
+                }
             }),
 
             Value::Class(class) => {
@@ -258,7 +267,7 @@ type Locals = Option<Rc<RefCell<LocalEnvironment>>>;
 // establishes a new `Rc` reference
 struct OptRc {}
 impl OptRc {
-    fn clone(x: &Locals) -> Locals {
+    fn clone<T>(x: &Option<Rc<RefCell<T>>>) -> Option<Rc<RefCell<T>>> {
         x.as_ref().cloned()
     }
 }
@@ -293,6 +302,7 @@ impl Interpreter {
                 Value::Function {
                     declaration,
                     closure,
+                    ..
                 },
                 Value::Instance { class, .. },
             ) => LocalEnvironment::nested(OptRc::clone(closure), |environment| {
@@ -303,6 +313,7 @@ impl Interpreter {
                 Value::Function {
                     declaration: declaration.clone(),
                     closure: Some(environment),
+                    this: Some(Rc::clone(&instance)),
                 }
             }),
             _ => unreachable!(),
@@ -580,6 +591,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         Ok(Rc::new(RefCell::new(Value::Lambda {
             declaration: x.clone(),
             closure: locals,
+            this: None,
         })))
     }
 
@@ -725,6 +737,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         let fun = Value::Function {
             declaration: x.clone(),
             closure: OptRc::clone(&locals),
+            this: None,
         };
 
         let value = Some(Rc::new(RefCell::new(fun)));
@@ -774,6 +787,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
                 Rc::new(RefCell::new(Value::Function {
                     declaration: method.clone(),
                     closure: OptRc::clone(&state),
+                    this: None,
                 })),
             );
         }
