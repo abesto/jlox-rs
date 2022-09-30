@@ -41,7 +41,10 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///              | funDecl
 ///              | varDecl
 ///              | statement ;
-/// classDecl    = "class" IDENTIFIER "{" ( "class"? function )* "}" ;
+/// classDecl    = "class" IDENTIFIER "{" method* "}" ;
+/// method       = "class"? function
+///              | getter ;
+/// getter       = IDENTIFIER block ;
 /// funDecl      = "fun" function ;
 /// function     = IDENTIFIER "(" parameters? ")" block ;
 /// parameters   = IDENTIFIER ( "," IDENTIFIER )* ;
@@ -197,6 +200,10 @@ impl Parser {
         &self.tokens[self.current]
     }
 
+    fn peek_next(&self) -> Option<&Token> {
+        self.tokens.get(self.current + 1)
+    }
+
     fn declaration(&mut self) -> Result<Stmt> {
         let res = if self.match_(&[TV::Fun]) {
             self.function_statement()
@@ -294,9 +301,24 @@ impl Parser {
 
         let mut methods = vec![];
         let mut class_methods = vec![];
+        let mut getters = vec![];
+
         while !self.check(&TV::RightBrace) && !self.is_at_end() {
+            // class method
             if self.match_(&[TV::Class]) {
                 class_methods.push(self.function("class method")?);
+
+            // getter
+            } else if matches!(self.peek_next(), Some(t) if t.value == TV::LeftBrace) {
+                let name = self.consume_identifier("Expected getter name")?.clone();
+                let body = self.body("getter")?;
+                getters.push(Function {
+                    name,
+                    params: vec![],
+                    body,
+                });
+
+            // instance method
             } else {
                 methods.push(self.function("method")?);
             }
@@ -307,6 +329,7 @@ impl Parser {
             name,
             methods,
             class_methods,
+            getters,
             left_brace,
         }))
     }

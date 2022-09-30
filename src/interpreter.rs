@@ -76,6 +76,7 @@ pub struct Class {
     name: String,
     methods: HashMap<String, Rc<RefCell<Function>>>,
     class_methods: HashMap<String, Rc<RefCell<Value>>>,
+    getters: HashMap<String, Rc<RefCell<Function>>>,
     left_brace: Token,
 }
 
@@ -676,7 +677,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
     }
 
     fn visit_get(self, expr: &crate::ast::Get, state: Locals) -> Result<Rc<RefCell<Value>>> {
-        let instance_rc = self.evaluate(&expr.object, state)?;
+        let instance_rc = self.evaluate(&expr.object, OptRc::clone(&state))?;
         let instance = instance_rc.borrow();
 
         match &*instance {
@@ -688,6 +689,14 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
                         &method_def.borrow(),
                         Rc::clone(&instance_rc),
                     )))))
+                } else if let Some(getter) = class.borrow().getters.get(&expr.name.lexeme) {
+                    match self
+                        .bind_this(&getter.borrow(), Rc::clone(&instance_rc))
+                        .call(self, vec![], state)
+                    {
+                        Err(Error::Return { value, .. }) => Ok(value),
+                        x => x,
+                    }
                 } else {
                     Err(Error::UndefinedProperty {
                         object: instance.clone(),
@@ -892,6 +901,19 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         }
         let methods = methods;
 
+        let mut getters = HashMap::new();
+        for getter in &stmt.getters {
+            getters.insert(
+                getter.name.lexeme.clone(),
+                Rc::new(RefCell::new(Function {
+                    declaration: getter.clone(),
+                    closure: OptRc::clone(&state),
+                    force_return: None,
+                })),
+            );
+        }
+        let getters = getters;
+
         let mut class_methods = HashMap::new();
         for class_method in &stmt.class_methods {
             class_methods.insert(
@@ -909,6 +931,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
             name: stmt.name.lexeme.clone(),
             methods,
             class_methods,
+            getters,
             left_brace: stmt.left_brace.clone(),
         };
         let class = Value::Class(Rc::new(RefCell::new(class)));

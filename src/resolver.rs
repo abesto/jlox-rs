@@ -550,6 +550,13 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             );
         }
 
+        for getter in &stmt.getters {
+            result = combine_results(
+                result,
+                self.resolve_function(&getter.params, &getter.body, FunctionType::Function, state),
+            );
+        }
+
         result = combine_results(result, self.end_scope());
         self.current_class = enclosing_class;
         result

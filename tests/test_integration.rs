@@ -462,3 +462,5 @@ repl_test!(unknown_class_method, {
     > "C.foo();"
     E "Undefined property `foo` on `<class 'C'>` at 0:2"
 });
+
+program_test!(getter, { "16" });

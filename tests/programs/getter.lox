@@ -1,0 +1,11 @@
+class Square {
+    init(x) {
+        this.x = x;
+    }
+
+    area {
+        return this.x * this.x;
+    }
+}
+
+print Square(4).area;
