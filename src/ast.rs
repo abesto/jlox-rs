@@ -119,6 +119,7 @@ ast! {
             pub name: Token,
             pub left_brace: Token,  // Used as the "definition" point of `this`
             pub methods: Vec<Function>,
+            pub class_methods: Vec<Function>,
         },
         Function: struct {
             pub name: Token,

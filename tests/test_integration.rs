@@ -449,3 +449,16 @@ program_test!(constructor_returns_this_early, {
     "<C object>"
     "7"
 });
+
+program_test!(class_method, { "4" });
+
+program_test!(class_method_this, {
+    E "`this` in static method at 2:15"
+    E "Variable resolution failed, see errors above."
+});
+
+repl_test!(unknown_class_method, {
+    > "class C {}"
+    > "C.foo();"
+    E "Undefined property `foo` on `<class 'C'>` at 0:2"
+});

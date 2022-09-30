@@ -41,7 +41,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///              | funDecl
 ///              | varDecl
 ///              | statement ;
-/// classDecl    = "class" IDENTIFIER "{" function* "}" ;
+/// classDecl    = "class" IDENTIFIER "{" ( "class"? function )* "}" ;
 /// funDecl      = "fun" function ;
 /// function     = IDENTIFIER "(" parameters? ")" block ;
 /// parameters   = IDENTIFIER ( "," IDENTIFIER )* ;
@@ -293,14 +293,20 @@ impl Parser {
             .clone();
 
         let mut methods = vec![];
+        let mut class_methods = vec![];
         while !self.check(&TV::RightBrace) && !self.is_at_end() {
-            methods.push(self.function("method")?);
+            if self.match_(&[TV::Class]) {
+                class_methods.push(self.function("class method")?);
+            } else {
+                methods.push(self.function("method")?);
+            }
         }
 
         self.consume(&TV::RightBrace, "Expected `}` after class body")?;
         Ok(Stmt::Class(Class {
             name,
             methods,
+            class_methods,
             left_brace,
         }))
     }

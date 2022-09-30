@@ -75,6 +75,7 @@ impl Callable for crate::ast::Lambda {
 pub struct Class {
     name: String,
     methods: HashMap<String, Rc<RefCell<Function>>>,
+    class_methods: HashMap<String, Rc<RefCell<Value>>>,
     left_brace: Token,
 }
 
@@ -695,6 +696,19 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
                     })
                 }
             }
+
+            Value::Class(class) => {
+                if let Some(method) = class.borrow().class_methods.get(&expr.name.lexeme) {
+                    Ok(Rc::clone(method))
+                } else {
+                    Err(Error::UndefinedProperty {
+                        object: instance.clone(),
+                        property: expr.name.lexeme.clone(),
+                        location: expr.name.location,
+                    })
+                }
+            }
+
             _ => Err(Error::PropertyOnNonObject {
                 non_object: instance.clone(),
                 property: expr.name.lexeme.clone(),
@@ -878,9 +892,23 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         }
         let methods = methods;
 
+        let mut class_methods = HashMap::new();
+        for class_method in &stmt.class_methods {
+            class_methods.insert(
+                class_method.name.lexeme.clone(),
+                Rc::new(RefCell::new(Value::Function(Function {
+                    declaration: class_method.clone(),
+                    closure: OptRc::clone(&state),
+                    force_return: None,
+                }))),
+            );
+        }
+        let class_methods = class_methods;
+
         let class = Class {
             name: stmt.name.lexeme.clone(),
             methods,
+            class_methods,
             left_brace: stmt.left_brace.clone(),
         };
         let class = Value::Class(Rc::new(RefCell::new(class)));

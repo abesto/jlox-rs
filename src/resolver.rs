@@ -47,6 +47,9 @@ pub enum Error {
     #[error("`this` outside of a class at {location}")]
     ThisOutsideClass { location: SourceLocation },
 
+    #[error("`this` in static method at {location}")]
+    ThisInStaticMethod { location: SourceLocation },
+
     #[error("Return from initializer of `{class}` at {location}")]
     ReturnFromInitializer {
         class: String,
@@ -103,6 +106,7 @@ enum FunctionType {
     Function,
     Lambda,
     Method,
+    ClassMethod,
     Initializer(String),
 }
 
@@ -400,6 +404,10 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
             Err(vec![Error::ThisOutsideClass {
                 location: expr.keyword.location,
             }])
+        } else if self.current_function == FunctionType::ClassMethod {
+            Err(vec![Error::ThisInStaticMethod {
+                location: expr.keyword.location,
+            }])
         } else {
             self.resolve_local(&expr.keyword, state)
         }
@@ -527,6 +535,18 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             result = combine_results(
                 result,
                 self.resolve_function(&method.params, &method.body, declaration, state),
+            );
+        }
+
+        for class_method in &stmt.class_methods {
+            result = combine_results(
+                result,
+                self.resolve_function(
+                    &class_method.params,
+                    &class_method.body,
+                    FunctionType::ClassMethod,
+                    state,
+                ),
             );
         }
 
