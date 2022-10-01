@@ -242,7 +242,7 @@ impl Resolver {
             .unwrap_or(Ok(()))
     }
 
-    fn resolve_local(&mut self, name: &Token, state: &mut State) -> Result {
+    fn resolve_local(&mut self, name: &Token, state: &mut State, is_use: bool) -> Result {
         let scopes_len = self.scopes.len();
         for (i, scope) in self.scopes.iter_mut().enumerate().rev() {
             if let Some(var) = scope.vars.get_mut(&name.lexeme) {
@@ -253,7 +253,8 @@ impl Resolver {
                     }]);
                 }
 
-                if var.state >= VariableState::Defined && var.state < VariableState::Used {
+                if is_use && var.state >= VariableState::Defined && var.state < VariableState::Used
+                {
                     var.state = VariableState::Used;
                 }
                 state.insert(
@@ -318,7 +319,7 @@ impl Resolver {
                 result,
                 self.declare(param),
                 self.define(param),
-                self.resolve_local(param, state),
+                self.resolve_local(param, state, true),
             ]);
         }
         result = combine_many_results([
@@ -345,13 +346,13 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
             }
         }
 
-        self.resolve_local(&expr.name, state)
+        self.resolve_local(&expr.name, state, true)
     }
 
     fn visit_assign(self, expr: &crate::ast::Assign, state: &mut State) -> Result {
         combine_results(
             expr.value.walk(&mut *self, state),
-            self.resolve_local(&expr.name, state),
+            self.resolve_local(&expr.name, state, false),
         )
     }
 
@@ -422,7 +423,7 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
                 location: expr.keyword.location,
             }])
         } else {
-            self.resolve_local(&expr.keyword, state)
+            self.resolve_local(&expr.keyword, state, true)
         }
     }
 
@@ -445,8 +446,8 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
         }
         combine_many_results([
             result,
-            self.resolve_local(&expr.keyword, state),
-            self.resolve_local(&expr.method, state),
+            self.resolve_local(&expr.keyword, state, true),
+            self.resolve_local(&expr.method, state, true),
         ])
     }
 }
@@ -469,7 +470,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             self.declare(&stmt.name),
             self.define(&stmt.name),
             self.resolve_function(&stmt.params, &stmt.body, FunctionType::Function, state),
-            self.resolve_local(&stmt.name, state),
+            self.resolve_local(&stmt.name, state, false),
         ])
     }
 
@@ -518,7 +519,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
                 Ok(())
             },
             self.define(&stmt.name),
-            self.resolve_local(&stmt.name, state),
+            self.resolve_local(&stmt.name, state, false),
         ])
     }
 
@@ -539,7 +540,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
         let mut result = combine_many_results([
             self.declare(&stmt.name),
             self.define(&stmt.name),
-            self.resolve_local(&stmt.name, state),
+            self.resolve_local(&stmt.name, state, false),
         ]);
 
         if let Some(superclass) = &stmt.superclass {

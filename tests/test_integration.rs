@@ -366,7 +366,6 @@ repl_test!(local_shadow, {
 });
 
 program_test!(unused_local, {
-    "foo"
     E "Unused local variable `x`, declared at 1:8"
     E "Variable resolution failed, see errors above."
 });
