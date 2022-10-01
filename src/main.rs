@@ -1,16 +1,4 @@
-mod ast;
-mod environment;
-mod interpreter;
-mod lox;
-mod parser;
-mod resolver;
-mod scanner;
-mod token;
-mod types;
-
-use lox::Lox;
-
-use crate::lox::Error;
+use jlox_rs_lib::{Error, Lox};
 
 fn main() {
     // Yes really manual parsing, if the book says to use a (Java) library I'll use Clap, until then we. do. it. by. The. BOOK.

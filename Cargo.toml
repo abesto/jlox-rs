@@ -11,3 +11,11 @@ thiserror = "1.0.32"
 
 [dev-dependencies]
 assert_cmd = "2.0.4"
+
+[[bin]]
+name = "jlox_rs"
+path = "src/main.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "jlox_rs_lib"

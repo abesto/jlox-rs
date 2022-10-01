@@ -5,6 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
+mod ast;
+mod environment;
+mod interpreter;
+mod parser;
+mod resolver;
+mod scanner;
+mod token;
+mod types;
+
 use crate::environment::GlobalEnvironment;
 use crate::interpreter::{Interpreter, NativeFunction, Value};
 use crate::parser::Parser;
@@ -76,12 +85,16 @@ impl Lox {
 
     pub fn run_file(&mut self, path: &str) -> Result {
         let contents = std::fs::read(path)?;
+        self.run_program(contents)
+    }
+
+    pub fn run_program(&mut self, program: Vec<u8>) -> Result {
         self.run(
             &mut Interpreter::new(Self::prepare_global_env()),
             ResolverConfig {
                 error_on_unused_locals: true,
             },
-            contents,
+            program,
         )?;
         Ok(())
     }
@@ -143,5 +156,11 @@ impl Lox {
             .map_err(|e| error_location_resolver.resolve(e))
             .map_err(|e| Error::Runtime(Box::new(e)))
             .map(|opt| opt.map(|v| v.borrow().clone()))
+    }
+}
+
+impl Default for Lox {
+    fn default() -> Self {
+        Self::new()
     }
 }
