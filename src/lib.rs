@@ -41,6 +41,7 @@ pub enum Error {
 }
 
 type Result<T = (), E = Error> = std::result::Result<T, E>;
+type Output<'a> = Box<dyn std::io::Write + 'a>;
 
 pub struct Lox {}
 
@@ -83,14 +84,14 @@ impl Lox {
         Rc::new(RefCell::new(env))
     }
 
-    pub fn run_file(&mut self, path: &str) -> Result {
+    pub fn run_file(&mut self, path: &str, output: Output) -> Result {
         let contents = std::fs::read(path)?;
-        self.run_program(contents)
+        self.run_program(contents, output)
     }
 
-    pub fn run_program(&mut self, program: Vec<u8>) -> Result {
+    pub fn run_program<'a>(&mut self, program: Vec<u8>, output: Output<'a>) -> Result {
         self.run(
-            &mut Interpreter::new(Self::prepare_global_env()),
+            &mut Interpreter::<'a>::new(Self::prepare_global_env(), output),
             ResolverConfig {
                 error_on_unused_locals: true,
             },
@@ -99,8 +100,8 @@ impl Lox {
         Ok(())
     }
 
-    pub fn run_prompt(&mut self) -> Result<()> {
-        let mut interpreter = Interpreter::new(Self::prepare_global_env());
+    pub fn run_prompt(&mut self, output: Output) -> Result<()> {
+        let mut interpreter = Interpreter::new(Self::prepare_global_env(), output);
         loop {
             print!("> ");
             std::io::stdout().flush()?;
@@ -168,9 +169,12 @@ impl Default for Lox {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn run(program: &str) -> String {
-    let mut lox = Lox::default();
-    match lox.run_program(program.as_bytes().to_vec()) {
-        Ok(()) => "All good".to_string(),
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    let mut lox = Lox::new();
+    let mut output: Vec<u8> = Vec::new();
+    let result = lox.run_program(program.as_bytes().to_vec(), Box::new(&mut output));
+    match result {
+        Ok(()) => std::str::from_utf8(&output).unwrap().to_string(),
         Err(e) => format!("{}", e),
     }
 }

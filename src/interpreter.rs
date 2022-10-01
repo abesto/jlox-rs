@@ -387,19 +387,21 @@ impl OptRc {
     }
 }
 
-#[derive(Default)]
-pub struct Interpreter {
+pub struct Interpreter<'a> {
     pub command: CommandIndex,
+    output: Box<dyn std::io::Write + 'a>,
     bindings: Bindings,
     globals: Globals,
 }
 
-impl Interpreter {
+impl<'a> Interpreter<'a> {
     #[must_use]
-    pub fn new(globals: Globals) -> Self {
+    pub fn new(globals: Globals, output: Box<dyn std::io::Write + 'a>) -> Self {
         Self {
             globals,
-            ..Default::default()
+            output,
+            command: Default::default(),
+            bindings: Default::default(),
         }
     }
 
@@ -429,7 +431,7 @@ impl Interpreter {
                 }
             })
         } else {
-            unreachable!()
+            unreachable!("bind_this on non-instance")
         }
     }
 
@@ -471,7 +473,7 @@ impl Interpreter {
     }
 }
 
-impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
+impl<'a> ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter<'a> {
     fn visit_literal(self, x: &crate::ast::Literal, _: Locals) -> Result<Rc<RefCell<Value>>> {
         Ok(Rc::new(RefCell::new(match x {
             Literal::Nil => Value::Nil,
@@ -493,7 +495,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             TokenValue::Bang => Ok(Rc::new(RefCell::new(Value::Boolean(
                 !right.borrow().is_truthy(),
             )))),
-            _ => unreachable!(),
+            _ => unreachable!("visit_unary on wrong TokenValue"),
         }
     }
 
@@ -797,9 +799,9 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
         let superclass = match &*OptRc::clone(&state).unwrap().borrow().get(binding).borrow() {
             Variable::Value(value_rc_ref) => match &*Rc::clone(value_rc_ref).borrow() {
                 Value::Class(c) => Rc::clone(c),
-                _ => unreachable!(),
+                _ => unreachable!("visit_super on non-class"),
             },
-            _ => unreachable!(),
+            _ => unreachable!("visit_super on uninitialized class"),
         };
 
         let object = match &*OptRc::clone(&state)
@@ -812,7 +814,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             .borrow()
         {
             Variable::Value(value) => Rc::clone(value),
-            _ => unreachable!(),
+            _ => unreachable!("visit_super on uninitialized instance"),
         };
 
         let method = superclass.borrow().find_method(&expr.method.lexeme);
@@ -847,7 +849,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
     }
 }
 
-impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interpreter {
+impl<'a> StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interpreter<'a> {
     fn visit_block(
         self,
         x: &crate::ast::Block,
@@ -885,7 +887,8 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         x: &crate::ast::Print,
         locals: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
-        println!("{}", self.evaluate(&x.expr, locals)?.borrow());
+        let output = self.evaluate(&x.expr, locals)?;
+        writeln!(self.output, "{}", output.borrow()).expect("printing failed");
         Ok(None)
     }
 
