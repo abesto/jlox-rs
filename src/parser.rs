@@ -41,7 +41,8 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///              | funDecl
 ///              | varDecl
 ///              | statement ;
-/// classDecl    = "class" IDENTIFIER "{" method* "}" ;
+/// classDecl    = "class" IDENTIFIER ( "<" IDENTIFIER )?
+///                "{" method* "}" ;
 /// method       = "class"? function
 ///              | getter ;
 /// getter       = IDENTIFIER block ;
@@ -295,6 +296,15 @@ impl Parser {
 
     fn class_declaration(&mut self) -> Result<Stmt> {
         let name = self.consume_identifier("Expected class name")?.clone();
+
+        let superclass = if self.match_(&[TV::Less]) {
+            Some(Variable {
+                name: self.consume_identifier("Expected superclass name")?.clone(),
+            })
+        } else {
+            None
+        };
+
         let left_brace = self
             .consume(&TV::LeftBrace, "Expected `{` before class body")?
             .clone();
@@ -327,6 +337,7 @@ impl Parser {
         self.consume(&TV::RightBrace, "Expected `}` after class body")?;
         Ok(Stmt::Class(Class {
             name,
+            superclass,
             methods,
             class_methods,
             getters,

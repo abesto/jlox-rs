@@ -55,6 +55,12 @@ pub enum Error {
         class: String,
         location: SourceLocation,
     },
+
+    #[error("Class `{class}` inherits from itself at {location}")]
+    SelfInheritance {
+        class: String,
+        location: SourceLocation,
+    },
 }
 
 type Output = ();
@@ -504,6 +510,23 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
             self.define(&stmt.name),
             self.resolve_local(&stmt.name, state),
         ]);
+
+        if let Some(superclass) = &stmt.superclass {
+            if superclass.name.lexeme == stmt.name.lexeme {
+                result = combine_results(
+                    result,
+                    Err(vec![Error::SelfInheritance {
+                        class: stmt.name.lexeme.clone(),
+                        location: superclass.name.location,
+                    }]),
+                );
+            }
+
+            result = combine_results(
+                result,
+                crate::ast::Expr::Variable(superclass.clone()).walk(&mut *self, state),
+            );
+        };
 
         self.begin_scope();
         {

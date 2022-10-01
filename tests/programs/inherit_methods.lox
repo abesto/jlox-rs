@@ -1,0 +1,25 @@
+class Parent {
+    init(n) {
+        this.n = n;
+    }
+
+    class four() {
+        return 4;
+    }
+
+    plus(n) {
+        return this.n + n;
+    }
+
+    squared {
+        return this.n * this.n;
+    }
+}
+
+class Child < Parent {}
+
+var x = Child(10);
+print x.n;
+print Child.four();
+print x.plus(5);
+print x.squared;

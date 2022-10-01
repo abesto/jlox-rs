@@ -464,3 +464,16 @@ repl_test!(unknown_class_method, {
 });
 
 program_test!(getter, { "16" });
+
+repl_test!(self_inheritance, {
+    > "class Ohno < Ohno {}"
+    E "Class `Ohno` inherits from itself at 0:13"
+    E "Variable resolution failed, see errors above."
+});
+
+program_test!(inherit_methods, {
+    "10"
+    "4"
+    "15"
+    "100"
+});

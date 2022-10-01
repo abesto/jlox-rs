@@ -74,6 +74,7 @@ impl Callable for crate::ast::Lambda {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Class {
     name: String,
+    superclass: Option<Rc<RefCell<Class>>>,
     methods: HashMap<String, Rc<RefCell<Function>>>,
     class_methods: HashMap<String, Rc<RefCell<Value>>>,
     getters: HashMap<String, Rc<RefCell<Function>>>,
@@ -86,9 +87,35 @@ impl std::fmt::Display for Class {
     }
 }
 
+impl Class {
+    fn find_method(&self, name: &str) -> Option<Rc<RefCell<Function>>> {
+        self.methods.get(name).map(Rc::clone).or_else(|| {
+            self.superclass
+                .as_ref()
+                .and_then(|superclass| superclass.borrow().find_method(name))
+        })
+    }
+
+    fn find_class_method(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
+        self.class_methods.get(name).map(Rc::clone).or_else(|| {
+            self.superclass
+                .as_ref()
+                .and_then(|superclass| superclass.borrow().find_class_method(name))
+        })
+    }
+
+    fn find_getter(&self, name: &str) -> Option<Rc<RefCell<Function>>> {
+        self.getters.get(name).map(Rc::clone).or_else(|| {
+            self.superclass
+                .as_ref()
+                .and_then(|superclass| superclass.borrow().find_getter(name))
+        })
+    }
+}
+
 impl Callable for Rc<RefCell<Class>> {
     fn arity(&self) -> usize {
-        if let Some(init) = self.borrow().methods.get("init") {
+        if let Some(init) = self.borrow().find_method("init") {
             init.borrow().arity()
         } else {
             0
@@ -106,7 +133,7 @@ impl Callable for Rc<RefCell<Class>> {
             fields: Default::default(),
         };
         let instance = Rc::new(RefCell::new(Value::Instance(instance)));
-        if let Some(init) = self.borrow().methods.get("init") {
+        if let Some(init) = self.borrow().find_method("init") {
             interpreter
                 .bind_this(&init.borrow(), Rc::clone(&instance))
                 .call(interpreter, args, scope)?;
@@ -336,6 +363,13 @@ pub enum Error {
     UndefinedProperty {
         object: Value,
         property: String,
+        location: SourceLocation,
+    },
+
+    #[error("Class `{class}` has superclass `{superclass}` of type `{}` which is not a class at {location}", .superclass.type_of())]
+    SuperclassNotClass {
+        class: String,
+        superclass: Value,
         location: SourceLocation,
     },
 }
@@ -684,12 +718,12 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             Value::Instance(Instance { fields, class }) => {
                 if let Some(field) = fields.get(&expr.name.lexeme) {
                     Ok(Rc::clone(field))
-                } else if let Some(method_def) = class.borrow().methods.get(&expr.name.lexeme) {
+                } else if let Some(method_def) = class.borrow().find_method(&expr.name.lexeme) {
                     Ok(Rc::new(RefCell::new(Value::Function(self.bind_this(
                         &method_def.borrow(),
                         Rc::clone(&instance_rc),
                     )))))
-                } else if let Some(getter) = class.borrow().getters.get(&expr.name.lexeme) {
+                } else if let Some(getter) = class.borrow().find_getter(&expr.name.lexeme) {
                     match self
                         .bind_this(&getter.borrow(), Rc::clone(&instance_rc))
                         .call(self, vec![], state)
@@ -707,8 +741,8 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             }
 
             Value::Class(class) => {
-                if let Some(method) = class.borrow().class_methods.get(&expr.name.lexeme) {
-                    Ok(Rc::clone(method))
+                if let Some(method) = class.borrow().find_class_method(&expr.name.lexeme) {
+                    Ok(method)
                 } else {
                     Err(Error::UndefinedProperty {
                         object: instance.clone(),
@@ -881,6 +915,25 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         stmt: &crate::ast::Class,
         state: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
+        let superclass = match &stmt.superclass {
+            Some(superclass_var) => {
+                let superclass_value_rc =
+                    self.visit_variable(superclass_var, OptRc::clone(&state))?;
+                let superclass_value = superclass_value_rc.borrow();
+                match &*superclass_value {
+                    Value::Class(superclass) => Some(Rc::clone(superclass)),
+                    _ => {
+                        return Err(Error::SuperclassNotClass {
+                            class: stmt.name.lexeme.clone(),
+                            superclass: superclass_value.clone(),
+                            location: superclass_var.name.location,
+                        })
+                    }
+                }
+            }
+            None => None,
+        };
+
         let binding = self.binding(&stmt.name);
         if let Some(binding) = binding {
             state.as_ref().unwrap().borrow_mut().assign(binding, None);
@@ -929,6 +982,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
 
         let class = Class {
             name: stmt.name.lexeme.clone(),
+            superclass,
             methods,
             class_methods,
             getters,
