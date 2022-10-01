@@ -1,0 +1,32 @@
+class A {
+    method() {
+        return "A method";
+    }
+
+    getter {
+        return "A getter";
+    }
+}
+
+class B < A {
+    method() {
+        return "B method";
+    }
+
+    getter {
+        return "B getter";
+    }
+
+    testMethod() {
+        return super.method();
+    }
+
+    testGetter() {
+        return super.getter;
+    }
+}
+
+class C < B {}
+
+print C().testMethod();
+print C().testGetter();

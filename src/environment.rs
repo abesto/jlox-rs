@@ -64,15 +64,23 @@ impl GlobalEnvironment {
 }
 
 impl LocalEnvironment {
+    pub fn new(parent: Option<Rc<RefCell<LocalEnvironment>>>) -> Self {
+        Self {
+            parent,
+            ..Default::default()
+        }
+    }
+
     pub fn nested<F, T>(parent: Option<Rc<RefCell<LocalEnvironment>>>, f: F) -> T
     where
         F: FnOnce(Rc<RefCell<Self>>) -> T,
     {
-        let child = LocalEnvironment {
-            data: Default::default(),
-            parent,
-        };
+        let child = Self::new(parent);
         f(Rc::new(RefCell::new(child)))
+    }
+
+    pub fn get_parent(&self) -> Option<Rc<RefCell<LocalEnvironment>>> {
+        self.parent.as_ref().map(Rc::clone)
     }
 
     // Possible optimization: remember (in `Resolver`?) the number of variables per scope,

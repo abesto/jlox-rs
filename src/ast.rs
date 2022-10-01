@@ -71,12 +71,16 @@ ast! {
         },
         Get: struct {
             pub object: Box<Expr>,
-            pub name: Token
+            pub name: Token,
         },
         Set: struct {
             pub object: Box<Expr>,
             pub name: Token,
-            pub value: Box<Expr>
+            pub value: Box<Expr>,
+        },
+        Super: struct {
+            pub keyword: Token,
+            pub method: Token,
         },
         This: struct {
             pub keyword: Token
@@ -117,7 +121,8 @@ ast! {
         },
         Class: struct {
             pub name: Token,
-            pub superclass: Option<Variable>,
+            // Box to keep enum variant sizes similar
+            pub superclass: Option<Box<(Token, Variable)>>,
             pub left_brace: Token,  // Used as the "definition" point of `this`
             pub methods: Vec<Function>,
             pub class_methods: Vec<Function>,
@@ -212,6 +217,7 @@ impl std::fmt::Display for Expr {
                 value,
             }) => write!(f, "{}.{} = {}", object, name, value),
             Expr::This(_) => write!(f, "this"),
+            Expr::Super(s) => write!(f, "super.{}", s.method),
         }
     }
 }

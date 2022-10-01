@@ -716,13 +716,18 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
 
         match &*instance {
             Value::Instance(Instance { fields, class }) => {
+                // Field
                 if let Some(field) = fields.get(&expr.name.lexeme) {
                     Ok(Rc::clone(field))
+
+                // Method
                 } else if let Some(method_def) = class.borrow().find_method(&expr.name.lexeme) {
                     Ok(Rc::new(RefCell::new(Value::Function(self.bind_this(
                         &method_def.borrow(),
                         Rc::clone(&instance_rc),
                     )))))
+
+                // Getter
                 } else if let Some(getter) = class.borrow().find_getter(&expr.name.lexeme) {
                     match self
                         .bind_this(&getter.borrow(), Rc::clone(&instance_rc))
@@ -785,6 +790,60 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
             },
             state,
         )
+    }
+
+    fn visit_super(self, expr: &crate::ast::Super, state: Locals) -> Result<Rc<RefCell<Value>>> {
+        let binding = self.binding(&expr.keyword).unwrap();
+        let superclass = match &*OptRc::clone(&state).unwrap().borrow().get(binding).borrow() {
+            Variable::Value(value_rc_ref) => match &*Rc::clone(value_rc_ref).borrow() {
+                Value::Class(c) => Rc::clone(c),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+
+        let object = match &*OptRc::clone(&state)
+            .unwrap()
+            .borrow()
+            .get(&Binding {
+                scopes_up: binding.scopes_up - 1,
+                index_in_scope: 0, // `this` is always the first thing bound in this scope
+            })
+            .borrow()
+        {
+            Variable::Value(value) => Rc::clone(value),
+            _ => unreachable!(),
+        };
+
+        let method = superclass.borrow().find_method(&expr.method.lexeme);
+        match method {
+            Some(method) => {
+                return Ok(Rc::new(RefCell::new(Value::Function(
+                    self.bind_this(&method.borrow(), object),
+                ))))
+            }
+            None => {
+                // TODO dedup this and `visit_get`
+                let getter = superclass.borrow().find_getter(&expr.method.lexeme);
+                match getter {
+                    Some(getter) => {
+                        match self.bind_this(&getter.borrow(), Rc::clone(&object)).call(
+                            self,
+                            vec![],
+                            state,
+                        ) {
+                            Err(Error::Return { value, .. }) => Ok(value),
+                            x => x,
+                        }
+                    }
+                    None => Err(Error::UndefinedProperty {
+                        object: object.borrow().clone(),
+                        property: expr.method.lexeme.clone(),
+                        location: expr.method.location,
+                    }),
+                }
+            }
+        }
     }
 }
 
@@ -915,31 +974,48 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         stmt: &crate::ast::Class,
         state: Locals,
     ) -> Result<Option<Rc<RefCell<Value>>>> {
-        let superclass = match &stmt.superclass {
-            Some(superclass_var) => {
-                let superclass_value_rc =
-                    self.visit_variable(superclass_var, OptRc::clone(&state))?;
-                let superclass_value = superclass_value_rc.borrow();
-                match &*superclass_value {
-                    Value::Class(superclass) => Some(Rc::clone(superclass)),
-                    _ => {
-                        return Err(Error::SuperclassNotClass {
-                            class: stmt.name.lexeme.clone(),
-                            superclass: superclass_value.clone(),
-                            location: superclass_var.name.location,
-                        })
-                    }
-                }
-            }
-            None => None,
-        };
-
-        let binding = self.binding(&stmt.name);
-        if let Some(binding) = binding {
+        let binding = self.binding(&stmt.name).cloned();
+        if let Some(binding) = &binding {
             state.as_ref().unwrap().borrow_mut().assign(binding, None);
         } else {
             self.globals.borrow_mut().define(&stmt.name, None);
         }
+
+        let (state, superclass) = match &stmt.superclass {
+            Some(superclass_var) => {
+                let superclass_value_rc =
+                    self.visit_variable(&superclass_var.1, OptRc::clone(&state))?;
+                let superclass_value = superclass_value_rc.borrow();
+
+                let state = match &stmt.superclass {
+                    Some(_) => {
+                        let env = LocalEnvironment::new(OptRc::clone(&state));
+                        Some(Rc::new(RefCell::new(env)))
+                    }
+                    None => state,
+                };
+
+                match &*superclass_value {
+                    Value::Class(superclass) => {
+                        let binding = self.binding(&superclass_var.0).unwrap();
+                        state.as_ref().unwrap().borrow_mut().assign(
+                            binding,
+                            Some(Rc::new(RefCell::new(Value::Class(Rc::clone(superclass))))),
+                        );
+
+                        (state, Some(Rc::clone(superclass)))
+                    }
+                    _ => {
+                        return Err(Error::SuperclassNotClass {
+                            class: stmt.name.lexeme.clone(),
+                            superclass: superclass_value.clone(),
+                            location: superclass_var.1.name.location,
+                        })
+                    }
+                }
+            }
+            None => (state, None),
+        };
 
         let mut methods = HashMap::new();
         for method in &stmt.methods {
@@ -979,6 +1055,7 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
             );
         }
         let class_methods = class_methods;
+        let has_superclass = superclass.is_some();
 
         let class = Class {
             name: stmt.name.lexeme.clone(),
@@ -991,7 +1068,13 @@ impl StmtVisitor<Result<Option<Rc<RefCell<Value>>>>, Locals> for &mut Interprete
         let class = Value::Class(Rc::new(RefCell::new(class)));
         let class = Rc::new(RefCell::new(class));
 
-        if let Some(binding) = binding {
+        let state = if has_superclass {
+            state.unwrap().borrow().get_parent()
+        } else {
+            state
+        };
+
+        if let Some(binding) = &binding {
             state.unwrap().borrow_mut().assign(binding, Some(class));
         } else {
             let _ = self.globals.borrow_mut().assign(&stmt.name, Some(class));

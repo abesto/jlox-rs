@@ -66,7 +66,7 @@ pub enum Error {
 type Output = ();
 pub type CommandIndex = usize;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Binding {
     pub scopes_up: usize,
     pub index_in_scope: usize,
@@ -418,6 +418,13 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
             self.resolve_local(&expr.keyword, state)
         }
     }
+
+    fn visit_super(self, expr: &crate::ast::Super, state: &mut State) -> Result {
+        combine_results(
+            self.resolve_local(&expr.keyword, state),
+            self.resolve_local(&expr.method, state),
+        )
+    }
 }
 
 impl StmtVisitor<Result, &mut State> for &mut Resolver {
@@ -512,21 +519,40 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
         ]);
 
         if let Some(superclass) = &stmt.superclass {
-            if superclass.name.lexeme == stmt.name.lexeme {
+            if superclass.1.name.lexeme == stmt.name.lexeme {
                 result = combine_results(
                     result,
                     Err(vec![Error::SelfInheritance {
                         class: stmt.name.lexeme.clone(),
-                        location: superclass.name.location,
+                        location: superclass.1.name.location,
                     }]),
                 );
             }
 
             result = combine_results(
                 result,
-                crate::ast::Expr::Variable(superclass.clone()).walk(&mut *self, state),
+                crate::ast::Expr::Variable(superclass.1.clone()).walk(&mut *self, state),
             );
-        };
+
+            self.begin_scope();
+            let scope = self.scopes.last_mut().unwrap();
+            let index_in_scope = scope.reserve();
+            scope.vars.insert(
+                "super".to_string(),
+                VariableData {
+                    state: VariableState::Used,
+                    declared_at: superclass.0.location,
+                    index_in_scope,
+                },
+            );
+            state.insert(
+                superclass.0.location,
+                Binding {
+                    scopes_up: 0,
+                    index_in_scope,
+                },
+            );
+        }
 
         self.begin_scope();
         {
@@ -578,6 +604,10 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
                 result,
                 self.resolve_function(&getter.params, &getter.body, FunctionType::Function, state),
             );
+        }
+
+        if stmt.superclass.is_some() {
+            result = combine_results(result, self.end_scope());
         }
 
         result = combine_results(result, self.end_scope());

@@ -477,3 +477,8 @@ program_test!(inherit_methods, {
     "15"
     "100"
 });
+
+program_test!(super, {
+    "A method"
+    "A getter"
+});

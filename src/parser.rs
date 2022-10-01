@@ -91,7 +91,8 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// arguments    = expression ( "," expression )* ;
 /// primary      = NUMBER | STRING | "true" | "false" | "nil"
 ///              | "(" expression ")"
-///              | IDENTIFIER ;
+///              | IDENTIFIER
+///              | "super" "." IDENTIFIER ;
 pub struct Parser {
     tokens: Vec<Token>,
     errors: Vec<Error>,
@@ -298,9 +299,13 @@ impl Parser {
         let name = self.consume_identifier("Expected class name")?.clone();
 
         let superclass = if self.match_(&[TV::Less]) {
-            Some(Variable {
-                name: self.consume_identifier("Expected superclass name")?.clone(),
-            })
+            let less = self.previous().clone();
+            Some((
+                less,
+                Variable {
+                    name: self.consume_identifier("Expected superclass name")?.clone(),
+                },
+            ))
         } else {
             None
         };
@@ -337,7 +342,7 @@ impl Parser {
         self.consume(&TV::RightBrace, "Expected `}` after class body")?;
         Ok(Stmt::Class(Class {
             name,
-            superclass,
+            superclass: superclass.map(Box::new),
             methods,
             class_methods,
             getters,
@@ -749,6 +754,14 @@ impl Parser {
             TV::This => Ok(Expr::This(This {
                 keyword: self.previous().clone(),
             })),
+            TV::Super => {
+                let keyword = self.previous().clone();
+                self.consume(&TV::Dot, "Expected `.` after `super`")?;
+                let method = self
+                    .consume_identifier("Expected superclass method name")?
+                    .clone();
+                Ok(Expr::Super(Super { keyword, method }))
+            }
             t => Err(Error::Bad {
                 msg: format!("Expected expression, found: `{}`", t),
                 location: self.previous().location,
