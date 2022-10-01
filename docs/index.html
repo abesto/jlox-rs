@@ -151,8 +151,8 @@
               <li>
                 The Java implementation stores references to
                 <code>Environment</code>s (basically, runtime variable scopes)
-                in multiple places; most notably, this closures are implemented
-                by "just" storing another reference to the right environment. In
+                in multiple places; most notably, closures are implemented by
+                "just" storing another reference to the right environment. In
                 Rust, the least painful way I could find was wrapping
                 environments in <code>Rc&lt;RefCell&lt;_&gt;&gt;</code>.
               </li>
