@@ -4,33 +4,279 @@
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs/loader.min.js"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/marx/4.0.0/marx.min.css"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/micromodal/0.4.10/micromodal.es.min.js"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+      type="module"
+    ></script>
+
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="micromodal.css" />
+
     <title>gh:abesto/jlox-rs</title>
   </head>
   <body>
-    <textarea id="code" cols="120" rows="40">
-class Greeter {
-    init(name) {
-        this.name = name;
-    }
+    <div class="main-container">
+      <div class="controls">
+        <button id="run">Run (Ctrl/Cmd + Enter)</button>
+        <select class="examples">
+          <option value="">-- Load an Example --</option>
+        </select>
+        <button id="help-button" data-micromodal-trigger="help-modal">
+          What am I looking at?
+        </button>
+      </div>
 
-    greet(you) {
-        print "Hi " + you + ", I'm " + this.name;
-    }
-}
+      <div class="code-container">
+        <div id="code" class="code"></div>
+        <pre id="output" class="output"></pre>
+      </div>
+    </div>
 
-var g = Greeter("jlox-rs");
-g.greet("esteemed user");
-    </textarea>
-    <button id="run">Run</button>
-    <pre id="output" />
+    <div id="help-modal" class="modal" aria-hidden="true">
+      <div tabindex="-1" class="modal__overlay" data-micromodal-close>
+        <div
+          role="dialog"
+          class="modal__container"
+          aria-modal="true"
+          aria-labelledby="help-modal-title"
+        >
+          <header class="modal__header">
+            <h2 id="help-modal-title" class="modal__title">
+              <a href="https://github.com/abesto/jlox-rs">jlox-rs (GitHub)</a>
+            </h2>
+            <button
+              aria-label="Close modal"
+              class="modal__close"
+              data-micromodal-close
+            ></button>
+          </header>
+          <div class="modal__content" id="help-modal-content">
+            <p>
+              So this dude called Robert Nystrom wrote a book called
+              <a href="https://craftinginterpreters.com/"
+                >Crafting Interpreters</a
+              >. You should totally get it. It's amazing.
+            </p>
+            <p>
+              It walks you through every small piece of creating an interpreter
+              for a small programming language called Lox. The first ~third of
+              the book guides us through building a tree-walk interpreter in
+              Java, called <code>jlox</code>. I followed along with it, but
+              instead of Java, wrote the code in Rust. Thus the name:
+              <code>jlox-rs</code>, because I have the creativity of a small
+              handful of dried moths. Rust can be compiled to JavaScript, and
+              after sprinkling a layer of web magic, you can now use this site
+              to poke at my interpreter!
+            </p>
+            <h4>Challenges</h4>
+            <p>
+              The book sets a number of challenges. I've taken on all (?) of
+              these, so the interpreter here has a few features not part of
+              "standard" Lox:
+            </p>
+            <ul>
+              <li>
+                You get a nice, friendly error message (thanks to a thing called
+                an "error production") if you use a binary operator with a
+                missing left-hand-side value.
+              </li>
+              <li>
+                You get a nice error message if you try to divide by zero.
+              </li>
+              <li>
+                When you concatenate (with <code>+</code>) anything to a string,
+                that thing gets cast to a string.
+              </li>
+              <li>
+                Not depicted here: when run in REPL mode, the value of the last
+                evaluated expression in an input is automatically printed.
+              </li>
+              <li>
+                You get a nice, friendly error message when you try to access a
+                declared, but uninitialized variable.
+              </li>
+              <li>
+                <code>break</code> works inside loops as you'd expect (and
+                errors out when used outside loops)
+              </li>
+              <li>
+                Anonymous functions exist: you can
+                <code>var f = fun() { return 3; }; print f();</code>
+              </li>
+              <li>
+                You get a static analysis error if a local variable is not used
+                (except in the REPL).
+              </li>
+              <li>
+                Local variables are accessed in O(1) time by binding them in the
+                variable resolution pass: each gets an index, and the variables
+                are accessed in a <code>Vec</code> by index at runtime; instead
+                of by name, in a (hash)map. By the way, this made everything
+                after it way more complex :D
+              </li>
+              <li>
+                Static methods exist. See the
+                <code>advanced_classes</code> example.
+              </li>
+              <li>Getters also exist! And inheritance works with them!</li>
+            </ul>
+
+            <h4>Rust things</h4>
+
+            The differences between Java and Rust led to a few interesting
+            results:
+
+            <ul>
+              <li>
+                The Java implementation uses Java to generate Java code to DRY
+                the AST. Naturally, I used Rust macros for this (and a few other
+                conveniences).
+              </li>
+              <li>
+                The Java implementation stores references to
+                <code>Environment</code>s (basically, runtime variable scopes)
+                in multiple places; most notably, this closures are implemented
+                by "just" storing another reference to the right environment. In
+                Rust, the least painful way I could find was wrapping
+                environments in <code>Rc&lt;RefCell&lt;_&gt;&gt;</code>.
+              </li>
+              <li>
+                It's not just environments! All runtime values can appear in
+                various positions where multiple references to them must exist
+                at the same time; so basically EVERY runtime value / variable
+                primarily exists as a
+                <code>Rc&lt;RefCell&lt;_&gt;&gt;</code>.
+              </li>
+              <li>
+                The <code>Result</code> type in Rust is awesome. I used it to
+                handle all kinds of errors, and the
+                <code>thiserror</code> library to raise specific error types.
+                The book uses both booleans to store success states in some
+                cases, and exceptions in some others; translating those took a
+                little thinking (not too much).
+              </li>
+              <li>
+                While I was at it, I added the location of the error to error
+                messages. As the book hints, this is most optimally done by
+                storing code locations as byte offsets most of the time, and
+                only resolving them to line/column numbers when an error is
+                printed to the user. (So that's what I did.)
+              </li>
+              <li>
+                There are a few enums with lots of variants. Sometimes code
+                needs / wants to operate on a specific variant. I didn't find a
+                great solution to this: mostly the data of each variant is now a
+                stand-alone struct, which works, but it feels a bit clumsy. It
+                also gets a bit tangled up with all the
+                <code>Rc&lt;RefCell&lt;_&gt;&gt;</code>.
+              </li>
+            </ul>
+
+            <h4>Other things</h4>
+            <ul>
+              <li>
+                I added tests for features I implemented as I went along; this
+                really helped out during some hairy refactors.
+              </li>
+              <li>
+                The Rust-to-WebAssembly pipeline is now fairly mature, I had
+                very few problems setting it up.
+              </li>
+              <li>
+                The code editor is Monaco-Editor, which is essentially the same
+                thing that's used in VS Code. For syntax highlighting, I took
+                one of the example Monaco language tokenizers, and tweaked it
+                until it matched this Lox variant. So I guess you could say it's
+                custom!
+              </li>
+              <li>
+                There are a number of things in the implementation I'm not quite
+                happy with, but this is good enough to stop, and move on to the
+                next part of the book!
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script type="module">
-      const code = document.getElementById("code");
-      const runButton = document.getElementById("run");
-      const output = document.getElementById("output");
       import init, { run } from "./pkg/jlox_rs_lib.js";
-      init().then(() => {
-        runButton.addEventListener("click", () => {
-          output.innerText = run(code.value);
+      import tokensProvider from "./loxMonarchTokensProvider.js";
+      import examples from "./examples.js";
+
+      MicroModal.init();
+
+      require.config({
+        paths: {
+          vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.0/min/vs",
+        },
+      });
+
+      require(["vs/editor/editor.main"], () => {
+        monaco.languages.register({ id: "lox" });
+        // Syntax highlighting
+        monaco.languages.setMonarchTokensProvider("lox", tokensProvider);
+        // Indentation and auto-closing
+        monaco.languages.setLanguageConfiguration("lox", {
+          brackets: [
+            ["(", ")"],
+            ["{", "}"],
+          ],
+        });
+
+        const runButton = document.getElementById("run");
+        const output = document.getElementById("output");
+        const selectExample = document.getElementsByClassName("examples")[0];
+
+        const editor = monaco.editor.create(document.getElementById("code"), {
+          value: examples.advanced_classes,
+          language: "lox",
+          additionalCssClassName: "code",
+          // Our error messages number line numbers from zero. Good? Maybe not. But this will help.
+          lineNumbers: (n) => (n - 1).toString(),
+        });
+
+        Object.keys(examples).forEach((name) => {
+          const node = document.createElement("option");
+          node.value = name;
+          node.innerText = name;
+          selectExample.appendChild(node);
+        });
+
+        selectExample.addEventListener("change", () => {
+          editor.setValue(examples[selectExample.value]);
+          selectExample.value = "";
+        });
+
+        init().then(() => {
+          const execute = () => {
+            output.innerText = "(Running...)";
+            output.innerText = run(editor.getValue());
+          };
+
+          runButton.addEventListener("click", execute);
+
+          editor.addCommand(
+            monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+            execute
+          );
         });
       });
     </script>
