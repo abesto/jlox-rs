@@ -65,7 +65,7 @@ class Square < Rectangle {
 
     to_string() {
         // Note the \`super\` call
-        return super.to_string() + "/Rectangle";
+        return super.to_string() + "/Square";
     }
 }
 
