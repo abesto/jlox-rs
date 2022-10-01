@@ -1,0 +1,12 @@
+{
+  "name": "jlox-rs",
+  "version": "0.1.0",
+  "files": [
+    "jlox_rs_lib_bg.wasm",
+    "jlox_rs_lib.js",
+    "jlox_rs_lib.d.ts"
+  ],
+  "module": "jlox_rs_lib.js",
+  "types": "jlox_rs_lib.d.ts",
+  "sideEffects": false
+}

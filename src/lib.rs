@@ -164,3 +164,13 @@ impl Default for Lox {
         Self::new()
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn run(program: &str) -> String {
+    let mut lox = Lox::default();
+    match lox.run_program(program.as_bytes().to_vec()) {
+        Ok(()) => "All good".to_string(),
+        Err(e) => format!("{}", e),
+    }
+}
