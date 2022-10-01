@@ -837,7 +837,7 @@ impl ExprVisitor<Result<Rc<RefCell<Value>>>, Locals> for &mut Interpreter {
                         }
                     }
                     None => Err(Error::UndefinedProperty {
-                        object: object.borrow().clone(),
+                        object: Value::Class(Rc::clone(&superclass)),
                         property: expr.method.lexeme.clone(),
                         location: expr.method.location,
                     }),

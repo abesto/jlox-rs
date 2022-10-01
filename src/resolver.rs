@@ -61,6 +61,12 @@ pub enum Error {
         class: String,
         location: SourceLocation,
     },
+
+    #[error("`super` outside of a class at {location}")]
+    SuperOutsideClass { location: SourceLocation },
+
+    #[error("`super` in class with no superclass at {location}")]
+    SuperWithoutSuperclass { location: SourceLocation },
 }
 
 type Output = ();
@@ -128,6 +134,7 @@ impl Default for FunctionType {
 enum ClassType {
     None,
     Class,
+    Subclass,
 }
 
 impl Default for ClassType {
@@ -420,10 +427,27 @@ impl ExprVisitor<Result, &mut State> for &mut Resolver {
     }
 
     fn visit_super(self, expr: &crate::ast::Super, state: &mut State) -> Result {
-        combine_results(
+        let mut result = Ok(());
+        if self.current_class == ClassType::None {
+            result = combine_results(
+                result,
+                Err(vec![Error::SuperOutsideClass {
+                    location: expr.keyword.location,
+                }]),
+            );
+        } else if self.current_class == ClassType::Class {
+            result = combine_results(
+                result,
+                Err(vec![Error::SuperWithoutSuperclass {
+                    location: expr.keyword.location,
+                }]),
+            );
+        }
+        combine_many_results([
+            result,
             self.resolve_local(&expr.keyword, state),
             self.resolve_local(&expr.method, state),
-        )
+        ])
     }
 }
 
@@ -519,6 +543,7 @@ impl StmtVisitor<Result, &mut State> for &mut Resolver {
         ]);
 
         if let Some(superclass) = &stmt.superclass {
+            self.current_class = ClassType::Subclass;
             if superclass.1.name.lexeme == stmt.name.lexeme {
                 result = combine_results(
                     result,

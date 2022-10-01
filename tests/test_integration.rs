@@ -482,3 +482,22 @@ program_test!(super, {
     "A method"
     "A getter"
 });
+
+repl_test!(missing_super_method, {
+    > "class C {}"
+    > "class D < C { f() { super.f(); } }"
+    > "D().f();"
+    E "Undefined property `f` on `<class 'C'>` at 1:0"
+});
+
+repl_test!(super_outside_class, {
+    > "super.foo();"
+    E "`super` outside of a class at 0:0"
+    E "Variable resolution failed, see errors above."
+});
+
+repl_test!(super_without_superclass, {
+    > "class C { f() { super.f(); } }"
+    E "`super` in class with no superclass at 0:16"
+    E "Variable resolution failed, see errors above."
+});
