@@ -131,6 +131,13 @@
                 after it way more complex :D
               </li>
               <li>
+                Here's one way this optimization made things more complex: when
+                running as a REPL, each new input counts as starting from line
+                `0`. That means variable bindings that say "this variable was
+                declared at `(0:10)`" need to also account for which command the
+                declaration was in.
+              </li>
+              <li>
                 Static methods exist. See the
                 <code>advanced_classes</code> example.
               </li>
